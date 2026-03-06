@@ -36,8 +36,9 @@ zhipuai==2.1.5.20250625
 # =========================
 pyyaml==6.0.1
 python-dotenv==1.0.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
+# Python 3.13 需要较新的 pydantic / pydantic-core 预编译wheel
+pydantic>=2.10.0,<3.0.0
+pydantic-settings>=2.7.0,<3.0.0
 
 # =========================
 # 工具类
