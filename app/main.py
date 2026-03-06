@@ -7,6 +7,7 @@ FastAPI应用启动入口
 """
 
 import logging
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -42,6 +43,7 @@ def setup_logging():
 
     # 添加控制台输出
     logger.add(
+        sys.stdout,
         level=settings.logging.level,
         format=settings.logging.format,
     )

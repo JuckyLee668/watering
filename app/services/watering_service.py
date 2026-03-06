@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc
 
 from app.models.database import User, Plot, WateringRecord
+from app.services.plot_catalog_service import get_plot_catalog_service
 from app.core.exceptions import (
     DatabaseException,
     UserNotFoundException,
@@ -25,6 +26,8 @@ class WateringService:
 
     def __init__(self, db: Session):
         self.db = db
+        self.plot_catalog = get_plot_catalog_service(db)
+        self._plots_synced = False
 
     def get_or_create_user(self, openid: str, name: str = None) -> User:
         """
@@ -52,9 +55,16 @@ class WateringService:
 
         return user
 
+    def _ensure_plots_from_csv(self):
+        """确保地块数据已从CSV同步到数据库"""
+        if self._plots_synced:
+            return
+        self.plot_catalog.sync_to_database()
+        self._plots_synced = True
+
     def get_or_create_plot(self, plot_name: str) -> Optional[Plot]:
         """
-        获取或创建地块
+        从CSV同步后的数据库中查询地块（不再创建临时地块）
 
         Args:
             plot_name: 地块名称
@@ -62,17 +72,17 @@ class WateringService:
         Returns:
             Plot实例，如果不存在则返回None
         """
+        self._ensure_plots_from_csv()
+
         # 先尝试精确匹配
         plot = self.db.query(Plot).filter(Plot.plot_name == plot_name).first()
         if plot:
             return plot
 
         # 尝试模糊匹配
-        plot = self.db.query(Plot).filter(
+        return self.db.query(Plot).filter(
             Plot.plot_name.like(f"%{plot_name}%")
         ).first()
-
-        return plot
 
     def create_watering_record(
         self,

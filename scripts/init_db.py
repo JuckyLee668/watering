@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datetime import datetime
 from app.models.database import Base, engine, SessionLocal
 from app.models.database import User, Plot, WateringRecord
+from app.services.plot_catalog_service import PlotCatalogService
 
 
 def init_tables():
@@ -64,51 +65,13 @@ def init_sample_data():
         for user in users:
             db.add(user)
 
-        # 创建示例地块
-        plots = [
-            Plot(
-                plot_name="1号地",
-                plot_code="P001",
-                area=50.0,
-                location="东区",
-                status=1,
-            ),
-            Plot(
-                plot_name="2号地",
-                plot_code="P002",
-                area=60.0,
-                location="东区",
-                status=1,
-            ),
-            Plot(
-                plot_name="3号地",
-                plot_code="P003",
-                area=45.0,
-                location="西区",
-                status=1,
-            ),
-            Plot(
-                plot_name="南边大地块",
-                plot_code="P004",
-                area=100.0,
-                location="南区",
-                status=1,
-            ),
-            Plot(
-                plot_name="试验田",
-                plot_code="P005",
-                area=20.0,
-                location="科研区",
-                status=1,
-            ),
-        ]
-
-        for plot in plots:
-            db.add(plot)
+        # 从CSV同步地块
+        plot_catalog = PlotCatalogService(db)
+        synced_count = plot_catalog.sync_to_database()
 
         # 提交数据
         db.commit()
-        print(f"成功创建 {len(users)} 个用户和 {len(plots)} 个地块")
+        print(f"成功创建 {len(users)} 个用户和 {synced_count} 个地块（来自CSV）")
 
         # 创建示例浇水记录
         user1 = db.query(User).filter(User.openid == "test_user_001").first()
