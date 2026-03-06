@@ -92,15 +92,15 @@ INSERT INTO `users` (`openid`, `name`, `phone`, `department`, `status`) VALUES
 ('test_user_002', '李四', '13800138001', '灌溉二组', 1),
 ('test_user_003', '王五', '13800138002', '灌溉一组', 1);
 
--- 插入示例地块
-INSERT INTO `plots` (`plot_name`, `plot_code`, `area`, `location`, `status`) VALUES
-('1号地', 'P001', 50.00, '东区', 1),
-('2号地', 'P002', 60.00, '东区', 1),
-('3号地', 'P003', 45.00, '西区', 1),
-('南边大地块', 'P004', 100.00, '南区', 1),
-('试验田', 'P005', 20.00, '科研区', 1),
-('大棚1', 'P006', 10.00, '北区', 1),
-('大棚2', 'P007', 10.00, '北区', 1);
+-- 地块信息改为从CSV导入（data/plots_sample.csv）
+-- MySQL导入示例：
+-- LOAD DATA LOCAL INFILE 'data/plots_sample.csv'
+-- INTO TABLE plots
+-- CHARACTER SET utf8mb4
+-- FIELDS TERMINATED BY ',' ENCLOSED BY '"'
+-- LINES TERMINATED BY '\n'
+-- IGNORE 1 LINES
+-- (plot_code, plot_name, area, location, status);
 
 -- 插入示例浇水记录
 INSERT INTO `watering_records` (`user_id`, `plot_id`, `volume`, `operation_date`, `start_time`, `end_time`, `duration_minutes`, `raw_input`, `confirm_status`) VALUES

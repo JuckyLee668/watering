@@ -128,14 +128,34 @@ class LLMService:
 
         # 格式化当前时间
         current_datetime_str = current_time.strftime("%Y年%m月%d日 %H:%M")
+        today_date = current_time.strftime("%Y-%m-%d")
 
         # 系统提示词
         system_prompt = settings.llm.prompt.system_template.format(
             current_datetime=current_datetime_str
         )
 
+        # Few-shot示例（使用当前日期，避免配置中的固定日期影响解析）
+        examples = settings.llm.prompt.examples or []
+        few_shot_parts = []
+        for index, example in enumerate(examples, start=1):
+            output = example.get("output", "")
+            # 支持在示例输出中使用 {today_date} 占位符
+            output = output.replace("{today_date}", today_date)
+            few_shot_parts.append(
+                f"示例{index}：\n"
+                f"输入：{example.get('input', '')}\n"
+                f"输出：{output}"
+            )
+
+        few_shot_text = "\n\n".join(few_shot_parts)
+
         # 用户提示词
-        user_prompt = f"""请从以下用户输入中提取浇水信息：
+        user_prompt = f"""请从以下用户输入中提取浇水信息。
+
+当前日期：{today_date}
+
+{few_shot_text}
 
 用户输入：{user_input}
 

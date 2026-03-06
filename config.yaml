@@ -114,25 +114,17 @@ llm:
 
     examples:
       - input: "今天下午2点到4点给3号地浇了50方水"
-        output: '{"plot_name": "3号地", "volume": 50, "date": "2026-03-06", "start_time": "14:00", "end_time": "16:00", "confidence": 0.95}'
+        output: '{"plot_name": "3号地", "volume": 50, "date": "{today_date}", "start_time": "14:00", "end_time": "16:00", "confidence": 0.95}'
       - input: "1号地浇了30方"
-        output: '{"plot_name": "1号地", "volume": 30, "date": "2026-03-06", "start_time": null, "end_time": null, "confidence": 0.8}'
+        output: '{"plot_name": "1号地", "volume": 30, "date": "{today_date}", "start_time": null, "end_time": null, "confidence": 0.8}'
 
 # ============================================================
 # 地块配置（可选：用于模糊匹配纠错）
 # ============================================================
 plots:
   enabled: true
-  # 标准地块列表，用于大模型纠错
-  standard_names:
-    - "1号地"
-    - "2号地"
-    - "3号地"
-    - "南边大地块"
-    - "北边地块"
-    - "试验田"
-    - "大棚1"
-    - "大棚2"
+  # 地块信息统一从CSV加载
+  csv_path: "data/plots_sample.csv"
 
 # ============================================================
 # 日志配置

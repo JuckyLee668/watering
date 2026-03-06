@@ -96,6 +96,13 @@ class LLMConfig(BaseModel):
     prompt: LLMPromptConfig = Field(default_factory=LLMPromptConfig)
 
 
+
+
+class PlotsConfig(BaseModel):
+    """地块配置"""
+    enabled: bool = True
+    csv_path: str = "data/plots_sample.csv"
+
 class LoggingConfig(BaseModel):
     """日志配置"""
     level: str = "INFO"
@@ -132,6 +139,9 @@ class Settings(BaseModel):
 
     # 大模型配置
     llm: LLMConfig = Field(default_factory=LLMConfig)
+
+    # 地块配置
+    plots: PlotsConfig = Field(default_factory=PlotsConfig)
 
     # 日志配置
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

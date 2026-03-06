@@ -201,6 +201,13 @@ class MessageService:
                 plot = self.watering_service.get_or_create_plot(plot_name)
                 if plot:
                     plot_id = plot.id
+                else:
+                    standard_names = self.watering_service.plot_catalog.get_standard_names()[:10]
+                    names_text = "、".join(standard_names) if standard_names else "（CSV暂无地块数据）"
+                    return (
+                        f"未在地块CSV中找到“{plot_name}”。请使用标准地块名称重新上报。\n可用地块：{names_text}",
+                        False,
+                    )
 
             # 解析日期
             date_str = pending_data.get("date")
