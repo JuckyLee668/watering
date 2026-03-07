@@ -13,8 +13,13 @@ fi
 echo "[1/3] Installing dependencies..."
 "$PYTHON_BIN" -m pip install -r requirements.txt
 
-echo "[2/3] Initializing SQLite database with sample data..."
-"$PYTHON_BIN" scripts/init_db.py --drop --sample
+if [ "${RESET_DB:-0}" = "1" ]; then
+  echo "[2/3] Rebuilding SQLite database (drop + sample)..."
+  "$PYTHON_BIN" scripts/init_db.py --drop --sample
+else
+  echo "[2/3] Ensuring database tables exist (keep existing data)..."
+  "$PYTHON_BIN" scripts/init_db.py
+fi
 
 if [ "${RELOAD:-0}" = "1" ]; then
   echo "[3/3] Starting app on http://0.0.0.0:8000 (reload mode)..."

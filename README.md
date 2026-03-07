@@ -1,35 +1,60 @@
 ﻿# 微信智能浇水上报系统
 
-基于 FastAPI + SQLite 的微信公众号浇水上报系统，支持消息解析、确认提交流程、管理后台查询导出、会话日志追踪。
+基于 FastAPI + SQLite 的微信公众号浇水上报系统，支持自然语言上报、确认提交流程、后台查询导出、微信会话日志追踪。
 
 ## 功能概览
 
 - 微信回调：`GET/POST /wechat/callback`
-- 上报解析：优先本地规则解析，必要时调用大模型（OpenAI / 智谱 / 通义 / DeepSeek）
-- 确认流程：用户回复 `1/确认` 提交，`2/取消` 放弃
-- 状态持久化：使用 SQLite（不依赖 Redis）
-- 管理后台：记录查询、按农户筛选、CSV 导出
-- 日志面板：微信入站/出站消息与错误可视化
+- 上报解析：本地规则优先，必要时调用大模型（OpenAI / 智谱 / 通义 / DeepSeek）
+- 确认流程：回复 `1/确认` 提交，回复 `2/取消` 放弃
+- 数据持久化：SQLite（不依赖 Redis）
+- 管理后台：浇水记录查询、按农户筛选、CSV 导出
+- 日志后台：`/api/v1/admin/log` 独立展示微信会话日志
+
+## 页面截图
+
+### 管理后台（浇水记录）
+
+![管理后台](docs/images/dashboard.png)
+
+### 条件筛选
+
+![条件筛选](docs/images/select.png)
+
+### 导出示例
+
+![导出示例](docs/images/excelexample.png)
+
+### 微信会话
+
+![微信会话](docs/images/wechat.png)
 
 ## 目录结构
 
 - `app/`：后端代码
 - `data/`：SQLite 数据库与示例 CSV
 - `scripts/`：初始化、启动、自检脚本
-- `docs/`：系统设计和对接文档
+- `docs/`：系统设计与对接文档
 - `logs/`：运行日志（`logs/app.log`）
 
 ## 环境要求
 
 - Python 3.10+
 - Windows PowerShell 或 Linux/macOS Shell
-- 公众号已配置服务器地址（生产需 HTTPS）
+- 公众号服务器配置权限（生产环境需 HTTPS）
+
+## 配置文件
+
+- 生产/本地私有配置：`config.yaml`
+- 脱敏模板：`config.yaml.example`
+
+建议流程：复制 `config.yaml.example` 为 `config.yaml` 后填写真实密钥。
 
 ## 快速启动
 
 ```bash
 pip install -r requirements.txt
-python scripts/init_db.py --drop --sample
+python scripts/init_db.py
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -37,7 +62,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 - 健康检查：`http://127.0.0.1:8000/api/v1/health`
 - 回调验活：`http://127.0.0.1:8000/wechat/callback`
-- 管理后台：`http://127.0.0.1:8000/api/v1/admin/dashboard`
+- 记录后台：`http://127.0.0.1:8000/api/v1/admin/dashboard`
+- 日志后台：`http://127.0.0.1:8000/api/v1/admin/log`
 
 ## 一键初始化 + 启动
 
@@ -50,8 +76,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1
 常用参数：
 
 - `-SkipInstall`：跳过依赖安装
+- `-KillPort`：启动前清理占用 `8000` 的进程
 - `-Reload`：开发热更新模式
-- `-KillPort`：启动前清理占用 `8000` 端口的进程
+- `-ResetDb`：重建数据库（会清空历史数据）
 
 示例：
 
@@ -65,7 +92,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1 -SkipInstall 
 sh scripts/start_local.sh
 ```
 
-开启热更新：
+环境变量：
+
+- `RELOAD=1`：启用热更新
+- `RESET_DB=1`：重建数据库（会清空历史数据）
+
+示例：
 
 ```bash
 RELOAD=1 sh scripts/start_local.sh
@@ -76,28 +108,28 @@ RELOAD=1 sh scripts/start_local.sh
 在公众号后台「开发与接口管理 -> 基本配置 -> 服务器配置」填写：
 
 - URL：`https://你的域名/wechat/callback`
-- Token：与 `config.yaml -> wechat.token` 完全一致
-- EncodingAESKey：与配置一致（或先用明文模式）
-- 消息加解密方式：建议先用明文模式完成联调
+- Token：必须与 `config.yaml -> wechat.token` 完全一致
+- EncodingAESKey：与配置一致（联调阶段可先明文模式）
 
 注意：
 
-- 回调地址必须公网可达且 HTTPS 可用
-- 稳定运行建议关闭 `--reload`
+- 回调地址必须公网可达且 HTTPS 有效
+- 正式运行建议关闭 `--reload`
 - Token 不一致会报 `verify token fail`
 
-## 管理接口
+## 主要接口
 
-- 后台页面：`GET /api/v1/admin/dashboard`
-- 记录查询：`GET /api/v1/records`
-- 记录导出：`GET /api/v1/records/export`
-- 会话日志：`GET /api/v1/chatlogs`
-- 统计：`GET /api/v1/statistics`
-- 健康检查：`GET /api/v1/health`
+- `GET /api/v1/admin/dashboard`：浇水记录后台页面
+- `GET /api/v1/admin/log`：微信会话日志页面
+- `GET /api/v1/records`：记录查询
+- `GET /api/v1/records/export`：CSV 导出
+- `GET /api/v1/chatlogs`：微信会话日志查询
+- `GET /api/v1/statistics`：统计
+- `GET /api/v1/health`：健康检查
 
-## 常见问题排查
+## 常见问题
 
-### 1) `/wechat/callback` 无法访问
+### 1) `/wechat/callback` 访问失败
 
 先本机检查：
 
@@ -105,7 +137,7 @@ RELOAD=1 sh scripts/start_local.sh
 python scripts/check_wechat_callback.py
 ```
 
-公网检查：
+再做公网检查：
 
 ```bash
 python scripts/check_public_wechat.py --url https://你的域名/wechat/callback
@@ -113,16 +145,14 @@ python scripts/check_public_wechat.py --url https://你的域名/wechat/callback
 
 ### 2) 微信发消息无回复
 
-按顺序检查：
+按顺序排查：
 
-1. 公众号后台 URL/Token/加密模式是否与服务一致
-2. 域名是否公网可达（DNS、TLS 证书、反代/隧道）
-3. 服务是否稳定运行（避免 `--reload` 频繁重启）
-4. 查看 `logs/app.log` 与后台「微信会话日志」是否有入站记录
+1. 公众号后台 URL/Token/加密模式是否一致
+2. 域名 DNS、TLS、隧道/反代是否正常
+3. 服务是否稳定运行（避免频繁重启）
+4. 查看 `logs/app.log` 和 `/api/v1/admin/log`
 
 ### 3) 启动报端口占用（WinError 10048）
-
-使用：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1 -SkipInstall -KillPort
@@ -130,24 +160,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1 -SkipInstall 
 
 ### 4) 一次上报出现两条记录
 
-系统已优化：待确认阶段如果重复收到同一条文本，只重发确认提示，不再新建记录。
-
-## 配置说明
-
-核心配置文件：`config.yaml`
-
-关键项：
-
-- `wechat.app_id / wechat.app_secret / wechat.token`
-- `llm.provider`（`openai` / `zhipuai` / `qwen` / `deepseek`）
-- `database.sqlite_path`
-- `plots.csv_path`
+已优化：待确认阶段若收到同一条重复文本，仅重发确认提示，不会重复建记录。
 
 ## 安全建议
 
-- 不要把真实 `app_secret`、`api_key` 提交到代码仓库
-- 生产环境建议通过环境变量或私有配置覆盖敏感字段
-- 对外服务建议启用 HTTPS 与访问控制
+- 不要把真实 `app_secret`、`api_key` 提交到仓库
+- 通过私有配置或环境变量注入敏感信息
+- 生产环境启用 HTTPS、访问控制和备份策略
 
 ## 相关文档
 

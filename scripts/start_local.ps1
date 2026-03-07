@@ -2,7 +2,8 @@ param(
     [string]$Python = "python",
     [switch]$SkipInstall,
     [switch]$Reload,
-    [switch]$KillPort
+    [switch]$KillPort,
+    [switch]$ResetDb
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,8 +31,13 @@ if (-not $SkipInstall) {
     & $Python -m pip install -r requirements.txt
 }
 
-Write-Host "[2/3] Initializing SQLite database with sample data..."
-& $Python scripts/init_db.py --drop --sample
+if ($ResetDb) {
+    Write-Host "[2/3] Rebuilding SQLite database (drop + sample)..."
+    & $Python scripts/init_db.py --drop --sample
+} else {
+    Write-Host "[2/3] Ensuring database tables exist (keep existing data)..."
+    & $Python scripts/init_db.py
+}
 
 if ($Reload) {
     Write-Host "[3/3] Starting app on http://0.0.0.0:8000 (reload mode)..."

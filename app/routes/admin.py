@@ -94,6 +94,7 @@ async def admin_dashboard() -> HTMLResponse:
 <div class=\"wrap\">
   <div class=\"card\">
     <h2 style=\"margin:0 0 10px;\">浇水记录管理后台</h2>
+    <div style=\"margin:0 0 10px;\"><a href=\"/api/v1/admin/log\" style=\"color:#2f7a56;text-decoration:none;\">打开微信会话日志独立页面</a></div>
     <div class=\"row\">
       <div><label>开始日期</label><input type=\"date\" id=\"start_date\" /></div>
       <div><label>结束日期</label><input type=\"date\" id=\"end_date\" /></div>
@@ -128,36 +129,6 @@ async def admin_dashboard() -> HTMLResponse:
     </table>
   </div>
 
-  <div class=\"card\">
-    <h2 style=\"margin:0 0 10px;\">微信会话日志</h2>
-    <div class=\"row\">
-      <div><label>开始日期</label><input type=\"date\" id=\"log_start_date\" /></div>
-      <div><label>结束日期</label><input type=\"date\" id=\"log_end_date\" /></div>
-      <div><label>组长OpenID</label><input type=\"text\" id=\"log_openid\" placeholder=\"按组长 openid 精确筛选\" /></div>
-      <div>
-        <label>方向</label>
-        <select id=\"log_direction\">
-          <option value=\"\">全部</option>
-          <option value=\"in\">入站</option>
-          <option value=\"out\">出站</option>
-        </select>
-      </div>
-      <div><label>每页数量</label><select id=\"log_limit\"><option>50</option><option selected>100</option><option>200</option></select></div>
-      <div><button onclick=\"loadLogs()\">查询日志</button></div>
-    </div>
-    <div id=\"log_meta\" style=\"margin-top:8px;color:#5c6861;font-size:12px;\"></div>
-  </div>
-
-  <div class=\"card\" style=\"overflow:auto;\">
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th><th>时间</th><th>组长OpenID</th><th>方向</th><th>类型</th><th>状态</th><th>内容</th><th>错误</th>
-        </tr>
-      </thead>
-      <tbody id=\"log_tbody\"></tbody>
-    </table>
-  </div>
 </div>
 <script>
 function today(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
@@ -167,15 +138,83 @@ function esc(t){return String(t||'').replaceAll('&','&amp;').replaceAll('<','&lt
 function renderRows(rows){const tb=document.getElementById('tbody');tb.innerHTML='';if(!rows.length){tb.innerHTML='<tr><td colspan="11">无记录</td></tr>';return;}rows.forEach(r=>{const tr=document.createElement('tr');const trange=`${r.start_time||'-'} ~ ${r.end_time||'-'}`;tr.innerHTML=`<td>${r.id}</td><td>${r.leader_name||r.user_name||r.user_id}</td><td>${r.plot_name||'-'}</td><td>${r.plot_owner_name||'-'}</td><td>${Number(r.volume||0).toFixed(1)}</td><td>${r.operation_date||'-'}</td><td>${trange}</td><td>${r.duration_minutes??'-'}</td><td title="${esc(r.raw_input)}">${esc(r.raw_input)||'-'}</td><td>${statusText(r.confirm_status)}</td><td>${r.create_time||'-'}</td>`;tb.appendChild(tr);});}
 async function loadData(){const p=getFilters();document.getElementById('meta').innerText='加载中...';const res=await fetch('/api/v1/records?'+p.toString());if(!res.ok){document.getElementById('meta').innerText='加载失败';return;}const rows=await res.json();renderRows(rows);document.getElementById('meta').innerText=`已加载 ${rows.length} 条`;}
 function exportCsv(){const p=getFilters();window.open('/api/v1/records/export?'+p.toString(),'_blank');}
-function getLogFilters(){const p=new URLSearchParams();const sd=document.getElementById('log_start_date').value;const ed=document.getElementById('log_end_date').value;const oid=document.getElementById('log_openid').value;const dir=document.getElementById('log_direction').value;const limit=document.getElementById('log_limit').value;if(sd)p.set('start_date',sd);if(ed)p.set('end_date',ed);if(oid)p.set('openid',oid);if(dir)p.set('direction',dir);if(limit)p.set('limit',limit);p.set('offset','0');return p;}
-function renderLogs(rows){const tb=document.getElementById('log_tbody');tb.innerHTML='';if(!rows.length){tb.innerHTML='<tr><td colspan=\"8\">无日志</td></tr>';return;}rows.forEach(r=>{const tr=document.createElement('tr');tr.innerHTML=`<td>${r.id}</td><td>${r.create_time||'-'}</td><td>${r.openid||'-'}</td><td>${r.direction||'-'}</td><td>${r.msg_type||'-'}</td><td>${r.status||'-'}</td><td title=\"${esc(r.content)}\">${esc(r.content)||'-'}</td><td title=\"${esc(r.error)}\">${esc(r.error)||'-'}</td>`;tb.appendChild(tr);});}
-async function loadLogs(){const p=getLogFilters();document.getElementById('log_meta').innerText='加载中...';const res=await fetch('/api/v1/chatlogs?'+p.toString());if(!res.ok){document.getElementById('log_meta').innerText='日志加载失败';return;}const rows=await res.json();renderLogs(rows);document.getElementById('log_meta').innerText=`已加载 ${rows.length} 条`;}
-(function(){const t=today();document.getElementById('start_date').value=t;document.getElementById('end_date').value=t;document.getElementById('log_start_date').value=t;document.getElementById('log_end_date').value=t;loadData();loadLogs();})();
+(function(){const t=today();document.getElementById('start_date').value=t;document.getElementById('end_date').value=t;loadData();})();
 </script>
 </body>
 </html>
 """
     return HTMLResponse(content=html)
+
+
+def _build_admin_log_html() -> str:
+    return """<!doctype html>
+<html lang=\"zh-CN\">
+<head>
+  <meta charset=\"UTF-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+  <title>微信会话日志</title>
+  <style>
+    body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; margin: 0; background: #f5f7f6; }
+    .wrap { max-width: 1280px; margin: 20px auto; padding: 0 16px; }
+    .card { background: #fff; border: 1px solid #dfe5e2; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+    .row { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 10px; align-items: end; }
+    label { display:block; font-size: 12px; color: #5c6861; margin-bottom: 4px; }
+    input, select, button { width: 100%; height: 36px; border: 1px solid #d6ded9; border-radius: 8px; padding: 0 10px; }
+    button { background: #2f7a56; color: #fff; cursor: pointer; }
+    table { width: 100%; min-width: 1080px; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #e5ece8; padding: 10px; text-align: left; font-size: 13px; }
+    th { background: #f3f8f5; }
+  </style>
+</head>
+<body>
+<div class=\"wrap\">
+  <div class=\"card\">
+    <h2 style=\"margin:0 0 10px;\">微信会话日志</h2>
+    <div style=\"margin:0 0 10px;\"><a href=\"/api/v1/admin/dashboard\" style=\"color:#2f7a56;text-decoration:none;\">返回管理后台</a></div>
+    <div class=\"row\">
+      <div><label>开始日期</label><input type=\"date\" id=\"start_date\" /></div>
+      <div><label>结束日期</label><input type=\"date\" id=\"end_date\" /></div>
+      <div><label>组长OpenID</label><input type=\"text\" id=\"openid\" placeholder=\"按组长 openid 精确筛选\" /></div>
+      <div>
+        <label>方向</label>
+        <select id=\"direction\">
+          <option value=\"\">全部</option>
+          <option value=\"in\">入站</option>
+          <option value=\"out\">出站</option>
+        </select>
+      </div>
+      <div><label>每页数量</label><select id=\"limit\"><option>50</option><option selected>100</option><option>200</option></select></div>
+      <div><button onclick=\"loadLogs()\">查询日志</button></div>
+    </div>
+    <div id=\"meta\" style=\"margin-top:8px;color:#5c6861;font-size:12px;\"></div>
+  </div>
+
+  <div class=\"card\" style=\"overflow:auto;\">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>时间</th><th>组长OpenID</th><th>方向</th><th>类型</th><th>状态</th><th>内容</th><th>错误</th>
+        </tr>
+      </thead>
+      <tbody id=\"tbody\"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+function today(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+function esc(t){return String(t||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');}
+function getFilters(){const p=new URLSearchParams();const sd=document.getElementById('start_date').value;const ed=document.getElementById('end_date').value;const oid=document.getElementById('openid').value;const dir=document.getElementById('direction').value;const limit=document.getElementById('limit').value;if(sd)p.set('start_date',sd);if(ed)p.set('end_date',ed);if(oid)p.set('openid',oid);if(dir)p.set('direction',dir);if(limit)p.set('limit',limit);p.set('offset','0');return p;}
+function renderRows(rows){const tb=document.getElementById('tbody');tb.innerHTML='';if(!rows.length){tb.innerHTML='<tr><td colspan=\"8\">无日志</td></tr>';return;}rows.forEach(r=>{const tr=document.createElement('tr');tr.innerHTML=`<td>${r.id}</td><td>${r.create_time||'-'}</td><td>${r.openid||'-'}</td><td>${r.direction||'-'}</td><td>${r.msg_type||'-'}</td><td>${r.status||'-'}</td><td title=\"${esc(r.content)}\">${esc(r.content)||'-'}</td><td title=\"${esc(r.error)}\">${esc(r.error)||'-'}</td>`;tb.appendChild(tr);});}
+async function loadLogs(){const p=getFilters();document.getElementById('meta').innerText='加载中...';const res=await fetch('/api/v1/chatlogs?'+p.toString());if(!res.ok){document.getElementById('meta').innerText='日志加载失败';return;}const rows=await res.json();renderRows(rows);document.getElementById('meta').innerText=`已加载 ${rows.length} 条`;}
+(function(){const t=today();document.getElementById('start_date').value=t;document.getElementById('end_date').value=t;loadLogs();})();
+</script>
+</body>
+</html>"""
+
+
+@router.get("/admin/log", response_class=HTMLResponse)
+async def admin_log_page() -> HTMLResponse:
+    return HTMLResponse(content=_build_admin_log_html())
 
 
 @router.get("/records", response_model=List[WateringRecordResponse])

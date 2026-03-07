@@ -1,44 +1,74 @@
-﻿# 寰俊瀵规帴閰嶇疆鎸囧崡锛堟湇鍔″彿/浼佷笟寰俊锛?
+﻿# 微信对接配置指南（公众号）
 
-## 1. 鍥炶皟鍦板潃鍑嗗
+## 1. 前置条件
 
-鏈嶅姟鍚姩鍚庣‘淇濆叕缃戝彲璁块棶锛?
+- 公众号具备服务器配置权限
+- 服务已启动并可访问
+- 回调地址具备 HTTPS
 
-- 鍥炶皟 URL锛歚https://浣犵殑鍩熷悕/wechat/callback`
-- Token锛氫笌 `config.yaml -> wechat.token` 淇濇寔涓€鑷?
+## 2. 回调地址与参数
 
-## 2. 寰俊鍚庡彴閰嶇疆姝ラ
+在公众号后台配置：
 
-1. 杩涘叆鍏紬鍙峰钩鍙?-> 寮€鍙?-> 鍩烘湰閰嶇疆銆?
-2. 寮€鍚湇鍔″櫒閰嶇疆锛屽～鍐欙細
-   - URL锛歚https://浣犵殑鍩熷悕/wechat/callback`
-   - Token锛歚your_wechat_token`
-   - EncodingAESKey锛氬彲鍏堜繚鐣欐槑鏂囨ā寮忥紙鍚庣画鍙垏鎹㈠畨鍏ㄦā寮忥級銆?
-3. 鎻愪氦鍚庯紝寰俊浼氬彂璧?GET 鏍￠獙璇锋眰锛?
-   - 鍙傛暟锛歚signature/timestamp/nonce/echostr`
-   - 绯荤粺浼氬湪 `GET /wechat/callback` 涓牎楠岀鍚嶅苟鍥炰紶 `echostr`銆?
+- URL：`https://你的域名/wechat/callback`
+- Token：与 `config.yaml` 中 `wechat.token` 一致
+- EncodingAESKey：与 `config.yaml` 中 `wechat.encoding_aes_key` 一致
 
-## 3. Token 楠岀瑙勫垯
+建议联调阶段先使用明文模式，稳定后切换兼容/安全模式。
 
-褰撳墠瀹炵幇浣嶄簬 `app/wechat/utils.py`锛?
+## 3. 验签机制
 
-1. 鍙?`token銆乼imestamp銆乶once` 涓変釜瀛楃涓层€?
-2. 瀛楀吀搴忔帓搴忓悗鎷兼帴銆?
-3. 鍋?SHA1銆?
-4. 涓庡井淇′紶鍏?`signature` 姣旇緝锛屼竴鑷村嵆閫氳繃銆?
+服务端逻辑位于 `app/wechat/utils.py`，规则如下：
 
-## 4. 娑堟伅鎺ユ敹
+1. 取 `token`、`timestamp`、`nonce`
+2. 字典序排序后拼接
+3. 计算 SHA1
+4. 与微信请求中的 `signature` 对比
 
-寰俊姝ｅ父鎺ㄩ€佺敤鎴锋秷鎭悗锛?
+一致则通过验签。
 
-- 鏂囨湰娑堟伅涓庤闊宠浆鏂囨湰娑堟伅閮借蛋 `POST /wechat/callback`銆?
-- 杩斿洖鍊煎繀椤绘槸寰俊 XML 鏂囨湰娑堟伅锛堟湰椤圭洰宸插疄鐜帮級銆?
+## 4. 消息处理说明
 
-## 5. 绾夸笂寤鸿
+- 文本与语音识别结果均走 `POST /wechat/callback`
+- 服务返回 XML 文本消息给微信
+- 会话会写入日志表，后台可查看
 
-- Nginx 鍙嶅悜浠ｇ悊鍒?FastAPI銆?
-- 鍥炶皟鎺ュ彛寮€鍚闂棩蹇楋紝鏂逛究鎺掓煡绛惧悕澶辫触闂銆?
-- 鐢熶骇鐜鍔″繀鍚敤 HTTPS銆?
-- 鑻ヤ娇鐢?数据库 浜戞湇鍔★紝璇疯缃櫧鍚嶅崟骞跺惎鐢ㄥ己瀵嗙爜銆?
+## 5. 快速自检
 
+### 本地回调自检
 
+```bash
+python scripts/check_wechat_callback.py
+```
+
+### 公网可达性自检
+
+```bash
+python scripts/check_public_wechat.py --url https://你的域名/wechat/callback
+```
+
+## 6. 常见报错与处理
+
+### 6.1 `verify token fail`
+
+- 检查公众号后台 Token 与 `config.yaml` 是否完全一致
+- 注意前后空格、大小写
+
+### 6.2 公众号发消息无回复
+
+1. 检查公网回调是否可访问
+2. 检查 TLS 证书与 DNS
+3. 检查服务是否稳定运行（避免频繁重启）
+4. 查看 `logs/app.log` 与 `/api/v1/admin/log`
+
+### 6.3 回调偶发超时
+
+- 保证被动回复路径快速返回
+- 关闭开发热更新模式（`--reload`）
+- 降低外部依赖阻塞（如用户信息查询失败应降级）
+
+## 7. 推荐上线方案
+
+- 域名通过 Cloudflare / Nginx 反向代理到应用
+- 持续监控 `logs/app.log`
+- 周期备份 SQLite 数据库文件 `data/watering.db`
