@@ -88,13 +88,15 @@ class MessageService:
             user = self.watering_service.get_or_create_user(openid, name=nickname)
             raw_input = self._compose_raw_input(openid, user.name, user_input)
             parsed["raw_input"] = raw_input
-            plot_name = parsed.get("plot_name")
+            parsed_plot_name = parsed.get("plot_name")
+            display_plot_name = parsed_plot_name
             plot_id = None
             owner_name = "未登记"
-            if plot_name:
-                plot = self.watering_service.get_or_create_plot(plot_name)
+            if parsed_plot_name:
+                plot = self.watering_service.get_or_create_plot(parsed_plot_name)
                 if plot:
                     plot_id = plot.id
+                    display_plot_name = plot.plot_name or parsed_plot_name
                     owner_name = plot.owner_name or "未登记"
 
             operation_date = self._parse_date(parsed.get("date"))
@@ -105,7 +107,7 @@ class MessageService:
             record = self.watering_service.create_watering_record(
                 user_id=user.id,
                 plot_id=plot_id,
-                plot_name=plot_name or "未知地块",
+                plot_name=display_plot_name or "未知地块",
                 volume=float(parsed.get("volume", 0) or 0),
                 operation_date=operation_date,
                 start_time=start_time_obj,
@@ -115,6 +117,7 @@ class MessageService:
             )
 
             pending_payload = dict(parsed)
+            pending_payload["plot_name"] = display_plot_name
             pending_payload["record_id"] = record.id
             pending_payload["owner_name"] = owner_name
             self.state_manager.save_pending_data(openid, pending_payload)
@@ -128,7 +131,7 @@ class MessageService:
 
             confirm_msg = (
                 "请确认浇水记录：\n"
-                f"地块：{plot_name or '未指定'}\n"
+                f"地块：{display_plot_name or '未指定'}\n"
                 f"农户：{owner_name}\n"
                 f"水量：{parsed.get('volume', 0)} 方\n"
                 f"日期：{operation_date.strftime('%Y-%m-%d')}\n"
@@ -289,4 +292,3 @@ class MessageService:
 
 def get_message_service(db: Session) -> MessageService:
     return MessageService(db)
-

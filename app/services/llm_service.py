@@ -216,21 +216,17 @@ class LLMService:
             return None
         volume = float(volume_match.group(1))
 
-        plot_match = re.search(r"((?:\d+|[一二两三四五六七八九十]+)\s*号地)", text)
+        plot_match = re.search(r"([0-9A-Za-z一二两三四五六七八九十]+(?:[-_/][0-9A-Za-z一二两三四五六七八九十]+)*\s*号地)", text)
         if not plot_match:
             return None
         plot_name = self._normalize_plot_name(plot_match.group(1).replace(" ", ""))
 
-        operation_date = current_time.date()
-        if "昨天" in text:
-            operation_date = operation_date - timedelta(days=1)
-        elif "前天" in text:
-            operation_date = operation_date - timedelta(days=2)
+        operation_date = self._parse_operation_date(text=text, current_time=current_time)
 
         start_time = None
         end_time = None
         time_range = re.search(
-            r"([0-9一二两三四五六七八九十]{1,3})(?:[:点时](\d{1,2}|半)?)?\s*(?:到|至|-)\s*([0-9一二两三四五六七八九十]{1,3})(?:[:点时](\d{1,2}|半)?)?",
+            r"([0-9一二两三四五六七八九十]{1,3})(?:[:点时](\d{1,2}|半)?)?\s*(?:到|至|~|～|—|–|\s+-\s+)\s*([0-9一二两三四五六七八九十]{1,3})(?:[:点时](\d{1,2}|半)?)?",
             text,
         )
         if time_range:
@@ -241,6 +237,28 @@ class LLMService:
             if h1 is not None and h2 is not None and m1 is not None and m2 is not None and 0 <= h1 <= 23 and 0 <= h2 <= 23 and 0 <= m1 <= 59 and 0 <= m2 <= 59:
                 start_time = f"{h1:02d}:{m1:02d}"
                 end_time = f"{h2:02d}:{m2:02d}"
+        else:
+            enhanced_time_range = re.search(
+                r"(昨天|今天|前天|明天)?\s*(凌晨|早上|上午|中午|下午|晚上|傍晚|夜里)?\s*([0-9一二两三四五六七八九十]{1,3})(?:[:点时](\d{1,2}|半)?)?\s*(?:到|至|~|～|—|–|\s+-\s+)\s*"
+                r"(昨天|今天|前天|明天)?\s*(凌晨|早上|上午|中午|下午|晚上|傍晚|夜里)?\s*([0-9一二两三四五六七八九十]{1,3})(?:[:点时](\d{1,2}|半)?)?",
+                text,
+            )
+            if enhanced_time_range:
+                start_day = enhanced_time_range.group(1)
+                start_period = enhanced_time_range.group(2)
+                h1 = self._parse_hour_token(enhanced_time_range.group(3))
+                h1 = self._apply_period_to_hour(h1, start_period)
+                m1 = self._parse_minute_token(enhanced_time_range.group(4))
+
+                h2 = self._parse_hour_token(enhanced_time_range.group(7))
+                h2 = self._apply_period_to_hour(h2, enhanced_time_range.group(6))
+                m2 = self._parse_minute_token(enhanced_time_range.group(8))
+
+                if h1 is not None and h2 is not None and m1 is not None and m2 is not None and 0 <= h1 <= 23 and 0 <= h2 <= 23 and 0 <= m1 <= 59 and 0 <= m2 <= 59:
+                    start_time = f"{h1:02d}:{m1:02d}"
+                    end_time = f"{h2:02d}:{m2:02d}"
+                    if start_day:
+                        operation_date = self._resolve_relative_day(start_day, current_time.date())
 
         return {
             "success": True,
@@ -277,6 +295,26 @@ class LLMService:
         return self._cn_to_int(token.strip())
 
     @staticmethod
+    def _apply_period_to_hour(hour: Optional[int], period: Optional[str]) -> Optional[int]:
+        if hour is None or period is None:
+            return hour
+
+        if period in {"下午", "晚上", "傍晚", "夜里"}:
+            if 1 <= hour <= 11:
+                return hour + 12
+            return hour
+
+        if period == "中午":
+            if 1 <= hour <= 6:
+                return hour + 12
+            return hour
+
+        if period in {"凌晨", "早上", "上午"} and hour == 12:
+            return 0
+
+        return hour
+
+    @staticmethod
     def _parse_minute_token(token: Optional[str]) -> Optional[int]:
         if token is None or token == "":
             return 0
@@ -294,6 +332,30 @@ class LLMService:
             if n is not None:
                 return f"{n}号地"
         return plot_name
+
+    @staticmethod
+    def _resolve_relative_day(day_word: str, base_date):
+        if day_word == "前天":
+            return base_date - timedelta(days=2)
+        if day_word == "昨天":
+            return base_date - timedelta(days=1)
+        if day_word == "明天":
+            return base_date + timedelta(days=1)
+        return base_date
+
+    def _parse_operation_date(self, text: str, current_time: datetime):
+        base_date = current_time.date()
+        start_with_day = re.search(r"(昨天|今天|前天|明天)\s*(?:凌晨|早上|上午|中午|下午|晚上|傍晚|夜里)?\s*[0-9一二两三四五六七八九十]{1,3}(?:[:点时](?:\d{1,2}|半)?)?\s*(?:到|至|~|～|—|–|\s+-\s+)", text)
+        if start_with_day:
+            return self._resolve_relative_day(start_with_day.group(1), base_date)
+
+        if "前天" in text:
+            return base_date - timedelta(days=2)
+        if "昨天" in text:
+            return base_date - timedelta(days=1)
+        if "明天" in text:
+            return base_date + timedelta(days=1)
+        return base_date
 
     def is_watering_request(self, user_input: str) -> bool:
         keywords = [
