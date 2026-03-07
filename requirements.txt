@@ -11,14 +11,10 @@ python-multipart==0.0.6
 # =========================
 # 数据库
 # =========================
-sqlalchemy==2.0.25
+sqlalchemy==2.0.25; python_version < "3.13"
+sqlalchemy>=2.0.37,<3; python_version >= "3.13"
 pymysql==1.1.0
 alembic==1.13.1
-
-# =========================
-# Redis
-# =========================
-redis==5.0.1
 
 # =========================
 # 微信SDK
@@ -34,11 +30,12 @@ zhipuai==2.1.5.20250625
 # =========================
 # 配置管理
 # =========================
-pyyaml==6.0.1
+pyyaml>=6.0.2,<7
 python-dotenv==1.0.0
-# Python 3.13 需要较新的 pydantic / pydantic-core 预编译wheel
-pydantic>=2.10.0,<3.0.0
-pydantic-settings>=2.7.0,<3.0.0
+pydantic==2.5.3; python_version < "3.13"
+pydantic>=2.10.0,<3; python_version >= "3.13"
+pydantic-settings==2.1.0; python_version < "3.13"
+pydantic-settings>=2.6.1,<3; python_version >= "3.13"
 
 # =========================
 # 工具类

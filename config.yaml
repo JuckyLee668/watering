@@ -1,9 +1,5 @@
-# 微信智能浇水上报系统配置文件
-# WeChat Smart Watering Reporting System Configuration
+﻿# WeChat Smart Watering Reporting System Configuration
 
-# ============================================================
-# 应用基础配置
-# ============================================================
 app:
   name: "微信智能浇水上报系统"
   version: "1.0.0"
@@ -11,63 +7,37 @@ app:
   host: "0.0.0.0"
   port: 8000
 
-# ============================================================
-# 数据库配置
-# ============================================================
 database:
-  driver: "mysql+pymysql"
+  driver: "sqlite"
+  sqlite_path: "data/watering.db"
+  fallback_to_sqlite: false
   host: "localhost"
   port: 3306
-  username: "watering_user"
-  password: "your_password"
-  database: "watering_db"
+  username: ""
+  password: ""
+  database: ""
   charset: "utf8mb4"
   echo: false
-
-  # 连接池配置
   pool_size: 10
   max_overflow: 20
   pool_pre_ping: true
 
-# ============================================================
-# Redis配置
-# ============================================================
-redis:
-  host: "localhost"
-  port: 6379
-  password: ""
-  db: 0
-  decode_responses: true
-  encoding: "utf-8"
+state:
+  pending_timeout: 300
+  user_state_ttl: 3600
 
-  # 业务相关配置
-  pending_timeout: 300  # 待确认状态超时时间(秒)
-  user_state_ttl: 3600  # 用户状态缓存时间(秒)
-
-# ============================================================
-# 微信配置
-# ============================================================
 wechat:
-  # 微信公众号/企业微信配置
-  app_id: "your_app_id"
-  app_secret: "your_app_secret"
-  token: "your_wechat_token"
-  encoding_aes_key: "your_encoding_aes_key"
-
-  # 服务器配置
+  app_id: "wx4989516949bb8835"
+  app_secret: "292d62e42f3c55b22b5c78f7e5949c70"
+  token: "scglVoORPybqm40Rftvim67C"
+  encoding_aes_key: "tTorjAn67oiL5pKbwVZRYfwRs2azEv5jeayyolltxuZ"
   callback_url: "/wechat/callback"
+  welcome_message: "您好！欢迎使用智能浇水上报系统。请直接输入浇水信息，例如：今天下午2点到4点给3号地浇了50方水。"
 
-  # 消息配置
-  welcome_message: "您好！欢迎使用智能浇水上报系统。请直接输入浇水信息，如：'今天下午2点到4点给3号地浇了50方水'"
-
-# ============================================================
-# 大模型配置
-# ============================================================
 llm:
-  # 选择大模型提供商: "openai", "zhipuai", "qwen"
-  provider: "zhipuai"
+  # available: openai / zhipuai / qwen / deepseek
+  provider: "deepseek"
 
-  # OpenAI配置
   openai:
     api_key: "sk-xxxxxxxxxxxxxxxx"
     base_url: "https://api.openai.com/v1"
@@ -75,60 +45,33 @@ llm:
     temperature: 0.1
     max_tokens: 500
 
-  # 智谱GLM配置
   zhipuai:
     api_key: "xxxxxxxxxxxxxxxxxxxxxxxx"
 
-  # 通义千问配置
   qwen:
     api_key: "sk-xxxxxxxxxxxxxxxx"
     model: "qwen-turbo"
 
-  # Prompt配置
+  deepseek:
+    api_key: "sk-289d90e0dc744a0ea0636e55b2a9f29f"
+    base_url: "https://api.deepseek.com/v1"
+    model: "deepseek-chat"
+
   prompt:
     system_template: |
-      你是一个农业数据记录助手。你的任务是从用户的自然语言中提取浇水作业数据。
-
-      当前时间是：{current_datetime}
-
-      请严格按照以下JSON格式输出：
-      {{
-        "plot_name": "地块名称",
-        "volume": 数字(方数),
-        "date": "YYYY-MM-DD格式日期",
-        "start_time": "HH:MM格式开始时间",
-        "end_time": "HH:MM格式结束时间",
-        "confidence": 0.0-1.0置信度
-      }}
-
-      提取规则：
-      1. 地块名称：如果没有明确说出，尝试推断或标记为null
-      2. 水量：必须提取数字，单位默认为"方"或"立方米"
-      3. 日期：如果说"今天"，使用当前日期；说"昨天"则减1天
-      4. 时间：必须区分上午/下午/晚上，正确转换24小时制
-      5. 如果信息缺失或无法理解，confidence设为0并说明原因
-
-      注意：
-      - 只需输出JSON，不要添加任何解释
-      - 如果用户只是在闲聊或询问，输出 {{"intent":"chat","confidence":0}}
-
+      你是一个农业数据记录助手，负责从用户输入中提取浇水记录并输出 JSON。
+      当前时间：{current_datetime}
+      只输出 JSON，不要额外解释。
     examples:
       - input: "今天下午2点到4点给3号地浇了50方水"
         output: '{"plot_name": "3号地", "volume": 50, "date": "{today_date}", "start_time": "14:00", "end_time": "16:00", "confidence": 0.95}'
       - input: "1号地浇了30方"
         output: '{"plot_name": "1号地", "volume": 30, "date": "{today_date}", "start_time": null, "end_time": null, "confidence": 0.8}'
 
-# ============================================================
-# 地块配置（可选：用于模糊匹配纠错）
-# ============================================================
 plots:
   enabled: true
-  # 地块信息统一从CSV加载
   csv_path: "data/plots_sample.csv"
 
-# ============================================================
-# 日志配置
-# ============================================================
 logging:
   level: "INFO"
   format: "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
@@ -137,9 +80,6 @@ logging:
   retention: "30 days"
   compression: "zip"
 
-# ============================================================
-# CORS配置
-# ============================================================
 cors:
   enabled: true
   allow_origins: ["*"]

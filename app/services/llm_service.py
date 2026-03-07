@@ -1,22 +1,14 @@
-# -*- coding: utf-8 -*-
-"""
-大模型解析服务
-LLM Parsing Service
-
-使用大模型从自然语言中提取浇水信息
-"""
-
-import json
+﻿import json
 import re
-from datetime import datetime
-from typing import Optional, Dict, Any
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
 
 from app.core.config import settings
 from app.core.exceptions import LLMException
 
 
 class LLMService:
-    """大模型服务类"""
+    """LLM parsing service for watering messages."""
 
     def __init__(self):
         self._provider = settings.llm.provider
@@ -24,78 +16,97 @@ class LLMService:
         self._init_client()
 
     def _init_client(self):
-        """初始化大模型客户端"""
         if self._provider == "openai":
             self._init_openai()
         elif self._provider == "zhipuai":
             self._init_zhipuai()
         elif self._provider == "qwen":
             self._init_qwen()
+        elif self._provider == "deepseek":
+            self._init_deepseek()
         else:
-            raise LLMException(f"不支持的大模型提供商: {self._provider}")
+            raise LLMException(f"unsupported llm provider: {self._provider}")
 
     def _init_openai(self):
-        """初始化OpenAI客户端"""
         try:
             from openai import OpenAI
+
             self._client = OpenAI(
                 api_key=settings.llm.openai.api_key,
                 base_url=settings.llm.openai.base_url,
             )
-        except ImportError:
-            raise LLMException("请安装openai库: pip install openai")
+        except ImportError as exc:
+            raise LLMException("please install openai: pip install openai") from exc
 
     def _init_zhipuai(self):
-        """初始化智谱GLM客户端"""
         try:
             from zhipuai import ZhipuAI
+
             self._client = ZhipuAI(api_key=settings.llm.zhipuai.api_key)
-        except ImportError:
-            raise LLMException("请安装zhipuai库: pip install zhipuai")
+        except ImportError as exc:
+            raise LLMException("please install zhipuai: pip install zhipuai") from exc
 
     def _init_qwen(self):
-        """初始化通义千问客户端"""
         try:
             from openai import OpenAI
+
             self._client = OpenAI(
                 api_key=settings.llm.qwen.api_key,
                 base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             )
-        except ImportError:
-            raise LLMException("请安装openai库: pip install openai")
+        except ImportError as exc:
+            raise LLMException("please install openai: pip install openai") from exc
+
+    def _init_deepseek(self):
+        try:
+            from openai import OpenAI
+
+            self._client = OpenAI(
+                api_key=settings.llm.deepseek.api_key,
+                base_url=settings.llm.deepseek.base_url,
+            )
+        except ImportError as exc:
+            raise LLMException("please install openai: pip install openai") from exc
 
     def parse_watering_info(
         self,
         user_input: str,
         current_time: Optional[datetime] = None,
     ) -> Dict[str, Any]:
-        """
-        解析浇水信息
-
-        Args:
-            user_input: 用户输入的自然语言
-            current_time: 当前时间
-
-        Returns:
-            解析结果字典
-        """
         if current_time is None:
             current_time = datetime.now()
 
-        # 构建Prompt
+        if not self.is_watering_request(user_input):
+            return {
+                "success": False,
+                "is_chat": True,
+                "raw_input": user_input,
+            }
+
+        local_parsed = self._try_parse_local(user_input, current_time)
+        if local_parsed is not None:
+            return local_parsed
+
         prompt = self._build_prompt(user_input, current_time)
 
-        # 调用大模型
         try:
-            if self._provider == "openai" or self._provider == "qwen":
+            if self._provider in ("openai", "qwen", "deepseek"):
+                if self._provider == "openai":
+                    model = settings.llm.openai.model
+                elif self._provider == "qwen":
+                    model = settings.llm.qwen.model
+                else:
+                    model = settings.llm.deepseek.model
+
                 response = self._client.chat.completions.create(
-                    model=settings.llm.openai.model if self._provider == "openai" else settings.llm.qwen.model,
+                    model=model,
                     messages=[
                         {"role": "system", "content": prompt["system"]},
                         {"role": "user", "content": prompt["user"]},
                     ],
                     temperature=settings.llm.openai.temperature,
                     max_tokens=settings.llm.openai.max_tokens,
+                    timeout=3.5,
                 )
                 result_text = response.choices[0].message.content
 
@@ -107,84 +118,51 @@ class LLMService:
                         {"role": "user", "content": prompt["user"]},
                     ],
                     temperature=settings.llm.openai.temperature,
+                    timeout=3.5,
                 )
                 result_text = response.choices[0].message.content
 
             else:
-                raise LLMException(f"不支持的提供商: {self._provider}")
+                raise LLMException(f"unsupported provider: {self._provider}")
 
-            # 解析JSON结果
             return self._parse_json_result(result_text, user_input)
 
-        except Exception as e:
-            raise LLMException(f"大模型调用失败: {str(e)}")
+        except Exception as exc:
+            raise LLMException(f"llm call failed: {str(exc)}") from exc
 
-    def _build_prompt(
-        self,
-        user_input: str,
-        current_time: datetime,
-    ) -> Dict[str, str]:
-        """构建Prompt"""
-
-        # 格式化当前时间
-        current_datetime_str = current_time.strftime("%Y年%m月%d日 %H:%M")
+    def _build_prompt(self, user_input: str, current_time: datetime) -> Dict[str, str]:
+        current_datetime_str = current_time.strftime("%Y-%m-%d %H:%M")
         today_date = current_time.strftime("%Y-%m-%d")
 
-        # 系统提示词
         system_prompt = settings.llm.prompt.system_template.format(
             current_datetime=current_datetime_str
         )
 
-        # Few-shot示例（使用当前日期，避免配置中的固定日期影响解析）
         examples = settings.llm.prompt.examples or []
         few_shot_parts = []
         for index, example in enumerate(examples, start=1):
-            output = example.get("output", "")
-            # 支持在示例输出中使用 {today_date} 占位符
-            output = output.replace("{today_date}", today_date)
+            output = (example.get("output") or "").replace("{today_date}", today_date)
             few_shot_parts.append(
-                f"示例{index}：\n"
-                f"输入：{example.get('input', '')}\n"
-                f"输出：{output}"
+                f"Example {index}:\\n"
+                f"Input: {example.get('input', '')}\\n"
+                f"Output: {output}"
             )
 
-        few_shot_text = "\n\n".join(few_shot_parts)
+        few_shot_text = "\\n\\n".join(few_shot_parts)
 
-        # 用户提示词
-        user_prompt = f"""请从以下用户输入中提取浇水信息。
+        user_prompt = (
+            "Please extract structured watering info from the user message.\\n\\n"
+            f"Current date: {today_date}\\n\\n"
+            f"{few_shot_text}\\n\\n"
+            f"User message: {user_input}\\n\\n"
+            "Return JSON only."
+        )
 
-当前日期：{today_date}
+        return {"system": system_prompt, "user": user_prompt}
 
-{few_shot_text}
-
-用户输入：{user_input}
-
-请直接输出JSON格式的解析结果，不要添加任何解释。"""
-
-        return {
-            "system": system_prompt,
-            "user": user_prompt,
-        }
-
-    def _parse_json_result(
-        self,
-        result_text: str,
-        original_input: str,
-    ) -> Dict[str, Any]:
-        """
-        解析大模型返回的JSON结果
-
-        Args:
-            result_text: 大模型返回的文本
-            original_input: 用户原始输入
-
-        Returns:
-            解析后的字典
-        """
-        # 尝试提取JSON
+    def _parse_json_result(self, result_text: str, original_input: str) -> Dict[str, Any]:
         try:
-            # 去除可能的markdown代码块标记
-            result_text = result_text.strip()
+            result_text = (result_text or "").strip()
             if result_text.startswith("```json"):
                 result_text = result_text[7:]
             if result_text.startswith("```"):
@@ -193,10 +171,8 @@ class LLMService:
                 result_text = result_text[:-3]
             result_text = result_text.strip()
 
-            # 解析JSON
             data = json.loads(result_text)
 
-            # 检查是否是闲聊
             if data.get("intent") == "chat":
                 return {
                     "success": False,
@@ -204,7 +180,6 @@ class LLMService:
                     "raw_input": original_input,
                 }
 
-            # 验证必要字段
             if data.get("confidence", 0) < 0.5:
                 return {
                     "success": False,
@@ -213,7 +188,6 @@ class LLMService:
                     "message": "信息不完整或无法理解",
                 }
 
-            # 构建返回数据
             return {
                 "success": True,
                 "plot_name": data.get("plot_name"),
@@ -225,40 +199,120 @@ class LLMService:
                 "raw_input": original_input,
             }
 
-        except json.JSONDecodeError as e:
+        except json.JSONDecodeError as exc:
             return {
                 "success": False,
                 "raw_input": original_input,
-                "message": f"解析失败: {str(e)}",
+                "message": f"解析失败: {str(exc)}",
             }
 
+    def _try_parse_local(self, user_input: str, current_time: datetime) -> Optional[Dict[str, Any]]:
+        text = (user_input or "").strip()
+        if not text:
+            return None
+
+        volume_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:方|立方|m3|m³)", text, re.IGNORECASE)
+        if not volume_match:
+            return None
+        volume = float(volume_match.group(1))
+
+        plot_match = re.search(r"((?:\d+|[一二两三四五六七八九十]+)\s*号地)", text)
+        if not plot_match:
+            return None
+        plot_name = self._normalize_plot_name(plot_match.group(1).replace(" ", ""))
+
+        operation_date = current_time.date()
+        if "昨天" in text:
+            operation_date = operation_date - timedelta(days=1)
+        elif "前天" in text:
+            operation_date = operation_date - timedelta(days=2)
+
+        start_time = None
+        end_time = None
+        time_range = re.search(
+            r"([0-9一二两三四五六七八九十]{1,3})(?:[:点时](\d{1,2}|半)?)?\s*(?:到|至|-)\s*([0-9一二两三四五六七八九十]{1,3})(?:[:点时](\d{1,2}|半)?)?",
+            text,
+        )
+        if time_range:
+            h1 = self._parse_hour_token(time_range.group(1))
+            h2 = self._parse_hour_token(time_range.group(3))
+            m1 = self._parse_minute_token(time_range.group(2))
+            m2 = self._parse_minute_token(time_range.group(4))
+            if h1 is not None and h2 is not None and m1 is not None and m2 is not None and 0 <= h1 <= 23 and 0 <= h2 <= 23 and 0 <= m1 <= 59 and 0 <= m2 <= 59:
+                start_time = f"{h1:02d}:{m1:02d}"
+                end_time = f"{h2:02d}:{m2:02d}"
+
+        return {
+            "success": True,
+            "plot_name": plot_name,
+            "volume": volume,
+            "date": operation_date.isoformat(),
+            "start_time": start_time,
+            "end_time": end_time,
+            "confidence": 0.95,
+            "raw_input": user_input,
+        }
+
+    @staticmethod
+    def _cn_to_int(text: str) -> Optional[int]:
+        digits = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+        if not text:
+            return None
+        if text.isdigit():
+            return int(text)
+        if text in digits:
+            return digits[text]
+        if text == "十":
+            return 10
+        if "十" in text:
+            parts = text.split("十")
+            tens = digits.get(parts[0], 1) if parts[0] else 1
+            ones = digits.get(parts[1], 0) if len(parts) > 1 and parts[1] else 0
+            return tens * 10 + ones
+        return None
+
+    def _parse_hour_token(self, token: Optional[str]) -> Optional[int]:
+        if not token:
+            return None
+        return self._cn_to_int(token.strip())
+
+    @staticmethod
+    def _parse_minute_token(token: Optional[str]) -> Optional[int]:
+        if token is None or token == "":
+            return 0
+        t = token.strip()
+        if t == "半":
+            return 30
+        if t.isdigit():
+            return int(t)
+        return None
+
+    def _normalize_plot_name(self, plot_name: str) -> str:
+        if plot_name.endswith("号地"):
+            prefix = plot_name[:-2]
+            n = self._cn_to_int(prefix)
+            if n is not None:
+                return f"{n}号地"
+        return plot_name
+
     def is_watering_request(self, user_input: str) -> bool:
-        """
-        快速判断是否是浇水上报请求
-
-        Args:
-            user_input: 用户输入
-
-        Returns:
-            是否可能是浇水请求
-        """
-        # 关键词匹配
         keywords = [
-            "浇水", "灌水", "浇地", "灌溉",
-            "方", "立方米",
-            "号地", "地块", "田",
+            "浇水",
+            "灌水",
+            "灌溉",
+            "方",
+            "立方",
+            "号地",
+            "地块",
+            "田",
         ]
-
-        input_lower = user_input.lower()
-        return any(keyword in input_lower for keyword in keywords)
+        return any(keyword in user_input for keyword in keywords)
 
 
-# 全局LLM服务实例
 _llm_service: Optional[LLMService] = None
 
 
 def get_llm_service() -> LLMService:
-    """获取LLM服务实例"""
     global _llm_service
     if _llm_service is None:
         _llm_service = LLMService()

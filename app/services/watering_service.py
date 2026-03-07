@@ -1,88 +1,96 @@
-# -*- coding: utf-8 -*-
-"""
-浇水记录服务
-Watering Record Service
+﻿from datetime import date, datetime, time, timedelta
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
 
-负责浇水记录的数据库操作
-"""
-
-from datetime import datetime, date, time, timedelta
-from typing import Optional, List, Dict, Any
-
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc
 
-from app.models.database import User, Plot, WateringRecord
+from app.models.database import Plot, User, WateringRecord
 from app.services.plot_catalog_service import get_plot_catalog_service
-from app.core.exceptions import (
-    DatabaseException,
-    UserNotFoundException,
-    PlotNotFoundException,
-)
 
 
 class WateringService:
-    """浇水记录服务"""
-
     def __init__(self, db: Session):
         self.db = db
         self.plot_catalog = get_plot_catalog_service(db)
         self._plots_synced = False
 
+    @staticmethod
+    def _cn_to_int(text: str) -> Optional[int]:
+        digits = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+        if not text:
+            return None
+        if text in digits:
+            return digits[text]
+        if text == "十":
+            return 10
+        if "十" in text:
+            parts = text.split("十")
+            tens = digits.get(parts[0], 1) if parts[0] else 1
+            ones = digits.get(parts[1], 0) if len(parts) > 1 and parts[1] else 0
+            return tens * 10 + ones
+        return None
+
+    @classmethod
+    def _plot_aliases(cls, plot_name: str) -> List[str]:
+        name = (plot_name or "").strip().replace(" ", "")
+        if not name:
+            return []
+        aliases = {name}
+        if name.endswith("号地"):
+            prefix = name[:-2]
+            if prefix.isdigit():
+                cn_map = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八", 9: "九", 10: "十"}
+                n = int(prefix)
+                if n in cn_map:
+                    aliases.add(f"{cn_map[n]}号地")
+            else:
+                n = cls._cn_to_int(prefix)
+                if n is not None:
+                    aliases.add(f"{n}号地")
+        return list(aliases)
+
     def get_or_create_user(self, openid: str, name: str = None) -> User:
-        """
-        获取或创建用户
-
-        Args:
-            openid: 微信OpenID
-            name: 用户姓名
-
-        Returns:
-            User实例
-        """
         user = self.db.query(User).filter(User.openid == openid).first()
+        default_name = name or (f"组长_{openid[-8:]}" if openid else "组长")
+
+        def is_placeholder(n: Optional[str]) -> bool:
+            val = (n or "").strip()
+            return (not val) or val in {"未知用户", "未知组长", "组长"} or val.startswith("组长_")
 
         if user is None:
-            # 创建新用户
-            user = User(
-                openid=openid,
-                name=name or "未知用户",
-                status=1,
-            )
+            user = User(openid=openid, name=default_name, status=1)
             self.db.add(user)
+            self.db.commit()
+            self.db.refresh(user)
+        elif is_placeholder(user.name) and name:
+            user.name = default_name
             self.db.commit()
             self.db.refresh(user)
 
         return user
 
     def _ensure_plots_from_csv(self):
-        """确保地块数据已从CSV同步到数据库"""
         if self._plots_synced:
             return
         self.plot_catalog.sync_to_database()
         self._plots_synced = True
 
     def get_or_create_plot(self, plot_name: str) -> Optional[Plot]:
-        """
-        从CSV同步后的数据库中查询地块（不再创建临时地块）
-
-        Args:
-            plot_name: 地块名称
-
-        Returns:
-            Plot实例，如果不存在则返回None
-        """
         self._ensure_plots_from_csv()
+        aliases = self._plot_aliases(plot_name)
 
-        # 先尝试精确匹配
-        plot = self.db.query(Plot).filter(Plot.plot_name == plot_name).first()
-        if plot:
-            return plot
+        for alias in aliases:
+            plot = self.db.query(Plot).filter(Plot.plot_name == alias).first()
+            if plot:
+                return plot
 
-        # 尝试模糊匹配
-        return self.db.query(Plot).filter(
-            Plot.plot_name.like(f"%{plot_name}%")
-        ).first()
+        normalized_aliases = {a.replace(" ", "") for a in aliases}
+        for plot in self.db.query(Plot).all():
+            if (plot.plot_name or "").replace(" ", "") in normalized_aliases:
+                return plot
+
+        return self.db.query(Plot).filter(Plot.plot_name.like(f"%{plot_name}%")).first()
 
     def create_watering_record(
         self,
@@ -96,34 +104,14 @@ class WateringService:
         raw_input: str,
         confirm_status: int = 1,
     ) -> WateringRecord:
-        """
-        创建浇水记录
-
-        Args:
-            user_id: 用户ID
-            plot_id: 地块ID
-            plot_name: 地块名称
-            volume: 浇水方数
-            operation_date: 作业日期
-            start_time: 开始时间
-            end_time: 结束时间
-            raw_input: 原始输入
-            confirm_status: 确认状态
-
-        Returns:
-            WateringRecord实例
-        """
-        # 计算时长
         duration_minutes = None
         if start_time and end_time:
             start_dt = datetime.combine(date.today(), start_time)
             end_dt = datetime.combine(date.today(), end_time)
             if end_dt < start_dt:
-                # 跨天情况
                 end_dt += timedelta(days=1)
             duration_minutes = int((end_dt - start_dt).total_seconds() / 60)
 
-        # 创建记录
         record = WateringRecord(
             user_id=user_id,
             plot_id=plot_id,
@@ -135,11 +123,9 @@ class WateringService:
             raw_input=raw_input,
             confirm_status=confirm_status,
         )
-
         self.db.add(record)
         self.db.commit()
         self.db.refresh(record)
-
         return record
 
     def get_user_records(
@@ -149,31 +135,12 @@ class WateringService:
         end_date: Optional[date] = None,
         limit: int = 100,
     ) -> List[WateringRecord]:
-        """
-        获取用户的浇水记录
-
-        Args:
-            user_id: 用户ID
-            start_date: 开始日期
-            end_date: 结束日期
-            limit: 返回数量限制
-
-        Returns:
-            浇水记录列表
-        """
-        query = self.db.query(WateringRecord).filter(
-            WateringRecord.user_id == user_id
-        )
-
+        query = self.db.query(WateringRecord).filter(WateringRecord.user_id == user_id)
         if start_date:
             query = query.filter(WateringRecord.operation_date >= start_date)
         if end_date:
             query = query.filter(WateringRecord.operation_date <= end_date)
-
-        return query.order_by(
-            desc(WateringRecord.operation_date),
-            desc(WateringRecord.create_time),
-        ).limit(limit).all()
+        return query.order_by(desc(WateringRecord.operation_date), desc(WateringRecord.create_time)).limit(limit).all()
 
     def get_plot_records(
         self,
@@ -182,31 +149,12 @@ class WateringService:
         end_date: Optional[date] = None,
         limit: int = 100,
     ) -> List[WateringRecord]:
-        """
-        获取地块的浇水记录
-
-        Args:
-            plot_id: 地块ID
-            start_date: 开始日期
-            end_date: 结束日期
-            limit: 返回数量限制
-
-        Returns:
-            浇水记录列表
-        """
-        query = self.db.query(WateringRecord).filter(
-            WateringRecord.plot_id == plot_id
-        )
-
+        query = self.db.query(WateringRecord).filter(WateringRecord.plot_id == plot_id)
         if start_date:
             query = query.filter(WateringRecord.operation_date >= start_date)
         if end_date:
             query = query.filter(WateringRecord.operation_date <= end_date)
-
-        return query.order_by(
-            desc(WateringRecord.operation_date),
-            desc(WateringRecord.create_time),
-        ).limit(limit).all()
+        return query.order_by(desc(WateringRecord.operation_date), desc(WateringRecord.create_time)).limit(limit).all()
 
     def get_all_records(
         self,
@@ -214,27 +162,12 @@ class WateringService:
         end_date: Optional[date] = None,
         user_id: Optional[int] = None,
         plot_id: Optional[int] = None,
+        owner_name: Optional[str] = None,
         confirm_status: Optional[int] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[WateringRecord]:
-        """
-        获取所有浇水记录（支持筛选）
-
-        Args:
-            start_date: 开始日期
-            end_date: 结束日期
-            user_id: 用户ID筛选
-            plot_id: 地块ID筛选
-            confirm_status: 确认状态筛选
-            limit: 返回数量限制
-            offset: 偏移量
-
-        Returns:
-            浇水记录列表
-        """
         query = self.db.query(WateringRecord)
-
         if start_date:
             query = query.filter(WateringRecord.operation_date >= start_date)
         if end_date:
@@ -243,27 +176,23 @@ class WateringService:
             query = query.filter(WateringRecord.user_id == user_id)
         if plot_id:
             query = query.filter(WateringRecord.plot_id == plot_id)
+        if owner_name:
+            query = query.join(Plot, WateringRecord.plot_id == Plot.id).filter(Plot.owner_name.like(f"%{owner_name}%"))
         if confirm_status is not None:
             query = query.filter(WateringRecord.confirm_status == confirm_status)
-
-        return query.order_by(
-            desc(WateringRecord.operation_date),
-            desc(WateringRecord.create_time),
-        ).offset(offset).limit(limit).all()
+        return query.order_by(desc(WateringRecord.operation_date), desc(WateringRecord.create_time)).offset(offset).limit(limit).all()
 
     def get_record_by_id(self, record_id: int) -> Optional[WateringRecord]:
-        """
-        根据ID获取浇水记录
+        return self.db.query(WateringRecord).filter(WateringRecord.id == record_id).first()
 
-        Args:
-            record_id: 记录ID
-
-        Returns:
-            WateringRecord实例
-        """
-        return self.db.query(WateringRecord).filter(
-            WateringRecord.id == record_id
-        ).first()
+    def update_confirm_status(self, record_id: int, confirm_status: int) -> Optional[WateringRecord]:
+        record = self.get_record_by_id(record_id)
+        if not record:
+            return None
+        record.confirm_status = confirm_status
+        self.db.commit()
+        self.db.refresh(record)
+        return record
 
     def get_statistics(
         self,
@@ -272,20 +201,6 @@ class WateringService:
         user_id: Optional[int] = None,
         plot_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """
-        获取浇水统计信息
-
-        Args:
-            start_date: 开始日期
-            end_date: 结束日期
-            user_id: 用户ID（可选）
-            plot_id: 地块ID（可选）
-
-        Returns:
-            统计信息字典
-        """
-        from sqlalchemy import func
-
         query = self.db.query(
             func.count(WateringRecord.id).label("total_count"),
             func.sum(WateringRecord.volume).label("total_volume"),
@@ -296,14 +211,12 @@ class WateringService:
             WateringRecord.operation_date <= end_date,
             WateringRecord.confirm_status == 1,
         )
-
         if user_id:
             query = query.filter(WateringRecord.user_id == user_id)
         if plot_id:
             query = query.filter(WateringRecord.plot_id == plot_id)
 
         result = query.first()
-
         return {
             "total_count": result.total_count or 0,
             "total_volume": float(result.total_volume or 0),
@@ -314,7 +227,5 @@ class WateringService:
         }
 
 
-# 全局浇水服务工厂函数
 def get_watering_service(db: Session) -> WateringService:
-    """获取浇水服务实例"""
     return WateringService(db)

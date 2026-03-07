@@ -1,184 +1,147 @@
-# -*- coding: utf-8 -*-
-"""
-微信回调接口路由
-WeChat Callback API Routes
+﻿from typing import Optional
 
-处理微信服务器的消息回调
-"""
-
-from datetime import datetime
-from typing import Optional
-
-from fastapi import APIRouter, Request, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import PlainTextResponse
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import WeChatException
 from app.models.database import get_db
-from app.wechat.utils import (
-    WeChatUtils,
-    WeChatMessageType,
-    parse_message_type,
-)
+from app.services.chatlog_service import get_chatlog_service
 from app.services.message_service import get_message_service
+from app.wechat.utils import WeChatMessageType, WeChatUtils, parse_message_type
 
 
-# 创建路由
-router = APIRouter(prefix="/wechat", tags=["微信接口"])
+router = APIRouter(prefix="/wechat", tags=["wechat"])
 
 
-@router.get("/callback")
+def _safe_log(
+    db: Session,
+    openid: Optional[str],
+    msg_type: str,
+    direction: str,
+    content: str,
+    status: str = "success",
+    error: Optional[str] = None,
+) -> None:
+    try:
+        get_chatlog_service(db).create_log(
+            openid=openid,
+            msg_type=msg_type,
+            direction=direction,
+            content=content,
+            status=status,
+            error=error,
+        )
+    except Exception as exc:
+        logger.warning("write chat log failed: {}", str(exc))
+
+
+@router.get("/callback", response_class=PlainTextResponse)
 async def verify_callback(
-    signature: str = Query(..., description="微信加密签名"),
-    timestamp: str = Query(..., description="时间戳"),
-    nonce: str = Query(..., description="随机数"),
-    echostr: Optional[str] = Query(None, description="随机字符串"),
+    request: Request,
+    signature: Optional[str] = Query(None, description="wechat signature"),
+    timestamp: Optional[str] = Query(None, description="wechat timestamp"),
+    nonce: Optional[str] = Query(None, description="wechat nonce"),
+    echostr: Optional[str] = Query(None, description="wechat echo string"),
 ):
-    """
-    微信服务器验证回调
+    # Human/browser health check without WeChat signature params.
+    if not signature or not timestamp or not nonce:
+        client_ip = request.client.host if request.client else "-"
+        logger.info("wechat callback health check: client_ip={}", client_ip)
+        return PlainTextResponse(content="wechat callback alive")
 
-    用于首次配置微信开发者时的验证
-    """
-    # 验证签名
+    logger.info(
+        "wechat verify request: timestamp={}, nonce_len={}, echostr_len={}",
+        timestamp,
+        len(nonce or ""),
+        len(echostr or ""),
+    )
     if not WeChatUtils.check_signature(signature, timestamp, nonce):
-        raise WeChatException("签名验证失败", code=403)
+        logger.warning("wechat verify failed: signature mismatch")
+        raise WeChatException("signature verification failed", code=403)
 
-    # 返回echostr
-    if echostr:
-        return echostr
+    if echostr is not None:
+        logger.info("wechat verify success")
+        return PlainTextResponse(content=echostr)
+    return PlainTextResponse(content="success")
 
-    return "success"
 
-
-@router.post("/callback")
+@router.post("/callback", response_class=PlainTextResponse)
 async def handle_message(
     request: Request,
-    signature: str = Query(..., description="微信加密签名"),
-    timestamp: str = Query(..., description="时间戳"),
-    nonce: str = Query(..., description="随机数"),
+    signature: str = Query(..., description="wechat signature"),
+    timestamp: str = Query(..., description="wechat timestamp"),
+    nonce: str = Query(..., description="wechat nonce"),
     db: Session = Depends(get_db),
 ):
-    """
-    处理微信消息回调
-
-    接收用户发送的消息，调用LLM解析，返回确认消息
-    """
-    # 验证签名
     if not WeChatUtils.check_signature(signature, timestamp, nonce):
-        raise WeChatException("签名验证失败", code=403)
+        _safe_log(db, None, "system", "in", "signature verification failed", status="error", error="signature mismatch")
+        raise WeChatException("signature verification failed", code=403)
 
-    # 读取消息内容
     body = await request.body()
-
     try:
         xml_string = body.decode("utf-8")
-    except UnicodeDecodeError:
-        raise WeChatException("消息解码失败")
+    except UnicodeDecodeError as exc:
+        _safe_log(db, None, "system", "in", "message decode failed", status="error", error=str(exc))
+        raise WeChatException("message decode failed") from exc
 
-    # 解析XML消息
     msg_dict = WeChatUtils.parse_xml_message(xml_string)
-
-    # 提取关键信息
     msg_type, event = parse_message_type(msg_dict)
     openid = WeChatUtils.extract_openid(msg_dict)
-
     if not openid:
-        raise WeChatException("无法获取用户OpenID")
+        _safe_log(db, None, msg_type or "unknown", "in", xml_string[:1000], status="error", error="openid missing")
+        raise WeChatException("openid missing")
 
-    # 获取发送者ID（公众号ID）
     from_user = msg_dict.get("ToUserName", "")
 
-    # 处理事件消息
     if msg_type == WeChatMessageType.EVENT:
+        _safe_log(db, openid, "event", "in", event or "event")
         return await _handle_event(event, openid, from_user, db)
 
-    # 处理文本消息
     if msg_type == WeChatMessageType.TEXT:
         content = msg_dict.get("Content", "")
+        _safe_log(db, openid, "text", "in", content)
         return await _handle_text(content, openid, from_user, db)
 
-    # 处理语音消息（微信语音会自动转换为文字）
     if msg_type == WeChatMessageType.VOICE:
-        # 尝试获取语音识别结果
         recognition = msg_dict.get("Recognition", "")
-        if recognition:
-            content = recognition
-        else:
-            content = msg_dict.get("MediaId", "")
+        content = recognition if recognition else msg_dict.get("MediaId", "")
+        _safe_log(db, openid, "voice", "in", content)
         return await _handle_text(content, openid, from_user, db)
 
-    # 其他消息类型暂不支持
-    return WeChatUtils.build_text_message(
-        to_user=openid,
-        from_user=from_user,
-        content="暂不支持此类消息，请发送文字或语音。",
-    )
+    reply_content = "暂不支持此类消息，请发送文字或语音。"
+    _safe_log(db, openid, msg_type or "unknown", "in", xml_string[:1000])
+    _safe_log(db, openid, "text", "out", reply_content)
+    xml_body = WeChatUtils.build_text_message(to_user=openid, from_user=from_user, content=reply_content)
+    return Response(content=xml_body, media_type="application/xml")
 
 
-async def _handle_event(
-    event: str,
-    openid: str,
-    from_user: str,
-    db: Session,
-):
-    """处理事件消息"""
+async def _handle_event(event: str, openid: str, from_user: str, db: Session):
     if event == WeChatMessageType.SUBSCRIBE:
-        # 用户关注
-        welcome_msg = settings.wechat.welcome_message
-        return WeChatUtils.build_text_message(
-            to_user=openid,
-            from_user=from_user,
-            content=welcome_msg,
-        )
+        reply_content = settings.wechat.welcome_message
+        _safe_log(db, openid, "text", "out", reply_content)
+        xml_body = WeChatUtils.build_text_message(to_user=openid, from_user=from_user, content=reply_content)
+        return Response(content=xml_body, media_type="application/xml")
 
-    elif event == WeChatMessageType.UNSUBSCRIBE:
-        # 用户取消关注
-        return "success"
+    if event == WeChatMessageType.UNSUBSCRIBE:
+        _safe_log(db, openid, "event", "out", "success")
+        return PlainTextResponse(content="success")
 
-    # 其他事件
-    return "success"
+    _safe_log(db, openid, "event", "out", "success")
+    return PlainTextResponse(content="success")
 
 
-async def _handle_text(
-    content: str,
-    openid: str,
-    from_user: str,
-    db: Session,
-):
-    """
-    处理文本消息
-
-    Args:
-        content: 消息内容
-        openid: 用户OpenID
-        from_user: 公众号ID
-        db: 数据库会话
-
-    Returns:
-        XML格式的响应消息
-    """
-    # 获取消息服务
-    message_service = get_message_service(db)
-
+async def _handle_text(content: str, openid: str, from_user: str, db: Session):
     try:
-        # 处理消息
-        reply_content, waiting_confirm = message_service.process_text_message(
-            openid=openid,
-            content=content,
-        )
-
-        # 构建响应消息
-        return WeChatUtils.build_text_message(
-            to_user=openid,
-            from_user=from_user,
-            content=reply_content,
-        )
-
-    except Exception as e:
-        # 发生错误，返回错误消息
-        error_msg = f"系统处理出错，请稍后重试。错误：{str(e)}"
-        return WeChatUtils.build_text_message(
-            to_user=openid,
-            from_user=from_user,
-            content=error_msg,
-        )
+        message_service = get_message_service(db)
+        reply_content, _waiting_confirm = message_service.process_text_message(openid=openid, content=content)
+        _safe_log(db, openid, "text", "out", reply_content)
+        xml_body = WeChatUtils.build_text_message(to_user=openid, from_user=from_user, content=reply_content)
+        return Response(content=xml_body, media_type="application/xml")
+    except Exception as exc:
+        reply_content = "系统处理出错，请稍后重试。"
+        _safe_log(db, openid, "text", "out", reply_content, status="error", error=str(exc))
+        xml_body = WeChatUtils.build_text_message(to_user=openid, from_user=from_user, content=reply_content)
+        return Response(content=xml_body, media_type="application/xml")

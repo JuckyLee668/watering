@@ -7,6 +7,7 @@ FastAPI应用启动入口
 """
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 
@@ -15,10 +16,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
 
-from app.core.config import settings
-from app.core.exceptions import AppException
-from app.models.database import init_database
-from app.routes import wechat, admin
+try:
+    from app.core.config import settings
+    from app.core.exceptions import AppException
+    from app.models.database import init_database
+    from app.routes import wechat, admin
+except ModuleNotFoundError:
+    # Support running with `python app/main.py` from project root.
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from app.core.config import settings
+    from app.core.exceptions import AppException
+    from app.models.database import init_database
+    from app.routes import wechat, admin
 
 
 # ============================================================

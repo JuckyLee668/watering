@@ -84,7 +84,6 @@ def init_sample_data():
                 WateringRecord(
                     user_id=user1.id,
                     plot_id=plot1.id,
-                    plot_name=plot1.plot_name,
                     volume=50.0,
                     operation_date=datetime.now().date(),
                     start_time=datetime.strptime("08:00", "%H:%M").time(),
@@ -96,7 +95,6 @@ def init_sample_data():
                 WateringRecord(
                     user_id=user2.id,
                     plot_id=plot2.id,
-                    plot_name=plot2.plot_name,
                     volume=30.0,
                     operation_date=datetime.now().date(),
                     start_time=datetime.strptime("14:00", "%H:%M").time(),

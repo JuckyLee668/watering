@@ -46,6 +46,7 @@ class PlotCatalogService:
                         "plot_code": plot_code,
                         "area": (row.get("area") or "").strip(),
                         "location": (row.get("location") or "").strip(),
+                        "owner_name": (row.get("owner_name") or "").strip(),
                         "status": (row.get("status") or "1").strip(),
                     }
                 )
@@ -67,6 +68,7 @@ class PlotCatalogService:
                 existing.plot_name = row["plot_name"]
                 existing.area = area
                 existing.location = row["location"] or None
+                existing.owner_name = row["owner_name"] or None
                 existing.status = status
             else:
                 self.db.add(
@@ -75,6 +77,7 @@ class PlotCatalogService:
                         plot_code=row["plot_code"],
                         area=area,
                         location=row["location"] or None,
+                        owner_name=row["owner_name"] or None,
                         status=status,
                     )
                 )
