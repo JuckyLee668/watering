@@ -173,9 +173,51 @@ def load_config_from_yaml(config_path: Optional[str] = None) -> Dict[str, Any]:
     return _resolve_env_placeholders(config_dict or {})
 
 
+def _apply_generic_llm_env(settings: Settings) -> Settings:
+    provider = settings.llm.provider
+    generic_api_key = os.environ.get("LLM_API_KEY", "").strip()
+    generic_base_url = os.environ.get("LLM_BASE_URL", "").strip()
+    generic_model = os.environ.get("LLM_MODEL", "").strip()
+    generic_temperature = os.environ.get("LLM_TEMPERATURE", "").strip()
+    generic_max_tokens = os.environ.get("LLM_MAX_TOKENS", "").strip()
+
+    if provider == "openai":
+        if generic_api_key:
+            settings.llm.openai.api_key = generic_api_key
+        if generic_base_url:
+            settings.llm.openai.base_url = generic_base_url
+        if generic_model:
+            settings.llm.openai.model = generic_model
+        if generic_temperature:
+            settings.llm.openai.temperature = float(generic_temperature)
+        if generic_max_tokens:
+            settings.llm.openai.max_tokens = int(generic_max_tokens)
+    elif provider == "zhipuai":
+        if generic_api_key:
+            settings.llm.zhipuai.api_key = generic_api_key
+    elif provider == "qwen":
+        if generic_api_key:
+            settings.llm.qwen.api_key = generic_api_key
+        if generic_model:
+            settings.llm.qwen.model = generic_model
+    elif provider == "deepseek":
+        if generic_api_key:
+            settings.llm.deepseek.api_key = generic_api_key
+        if generic_base_url:
+            settings.llm.deepseek.base_url = generic_base_url
+        if generic_model:
+            settings.llm.deepseek.model = generic_model
+        if generic_temperature:
+            settings.llm.openai.temperature = float(generic_temperature)
+        if generic_max_tokens:
+            settings.llm.openai.max_tokens = int(generic_max_tokens)
+
+    return settings
+
+
 @lru_cache()
 def get_settings() -> Settings:
-    return Settings(**load_config_from_yaml())
+    return _apply_generic_llm_env(Settings(**load_config_from_yaml()))
 
 
 settings = get_settings()
