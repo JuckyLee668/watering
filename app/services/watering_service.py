@@ -1,4 +1,5 @@
-﻿from datetime import date, datetime, time, timedelta
+﻿import re
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -50,6 +51,64 @@ class WateringService:
                     aliases.add(f"{n}号地")
         return list(aliases)
 
+    @staticmethod
+    def _normalize_plot_text(value: str) -> str:
+        normalized = (value or "").strip().lower()
+        for ch in [" ", "\t", "\r", "\n", "-", "_", "/", "\\", "，", ",", "。", "."]:
+            normalized = normalized.replace(ch, "")
+        return normalized
+
+    @classmethod
+    def _extract_plot_core(cls, value: str) -> str:
+        text = (value or "").strip()
+        matches = re.findall(r"[0-9a-zA-Z]+(?:[\s\-_\/]*[0-9a-zA-Z]+)+\s*号地", text)
+        if not matches:
+            return ""
+        return cls._normalize_plot_text(matches[-1])
+
+    @staticmethod
+    def _extract_original_text(raw_input: Optional[str]) -> str:
+        text = str(raw_input or "")
+        return text.rsplit("] ", 1)[-1] if "] " in text else text
+
+    @staticmethod
+    def _relative_day_value(day_word: Optional[str]) -> Optional[int]:
+        mapping = {
+            "前天": -2,
+            "昨天": -1,
+            "今天": 0,
+            "明天": 1,
+            "次日": 1,
+            "翌日": 1,
+            "第二天": 1,
+        }
+        return mapping.get(day_word) if day_word else None
+
+    @classmethod
+    def _infer_end_date(
+        cls,
+        operation_date: date,
+        start_time: Optional[time],
+        end_time: Optional[time],
+        raw_input: Optional[str] = None,
+    ) -> date:
+        if start_time and end_time and end_time < start_time:
+            return operation_date + timedelta(days=1)
+
+        text = cls._extract_original_text(raw_input)
+        day_span = re.search(
+            r"(前天|昨天|今天|明天).{0,20}?(?:到|至|~|～|—|–|-).{0,20}?(昨天|今天|明天|次日|翌日|第二天)",
+            text,
+        )
+        if not day_span:
+            return operation_date
+
+        start_day = cls._relative_day_value(day_span.group(1))
+        end_day = cls._relative_day_value(day_span.group(2))
+        if start_day is None or end_day is None or end_day <= start_day:
+            return operation_date
+        return operation_date + timedelta(days=end_day - start_day)
+
     def get_or_create_user(self, openid: str, name: str = None) -> User:
         user = self.db.query(User).filter(User.openid == openid).first()
         default_name = name or (f"组长_{openid[-8:]}" if openid else "组长")
@@ -79,15 +138,30 @@ class WateringService:
     def get_or_create_plot(self, plot_name: str) -> Optional[Plot]:
         self._ensure_plots_from_csv()
         aliases = self._plot_aliases(plot_name)
+        plots = self.db.query(Plot).all()
+        plot_by_name = {(p.plot_name or ""): p for p in plots}
 
         for alias in aliases:
-            plot = self.db.query(Plot).filter(Plot.plot_name == alias).first()
+            plot = plot_by_name.get(alias)
             if plot:
                 return plot
 
         normalized_aliases = {a.replace(" ", "") for a in aliases}
-        for plot in self.db.query(Plot).all():
+        for plot in plots:
             if (plot.plot_name or "").replace(" ", "") in normalized_aliases:
+                return plot
+
+        normalized_input = self._normalize_plot_text(plot_name)
+        core_input = self._extract_plot_core(plot_name)
+        for plot in plots:
+            plot_name_db = plot.plot_name or ""
+            normalized_plot = self._normalize_plot_text(plot_name_db)
+            core_plot = self._extract_plot_core(plot_name_db)
+
+            if normalized_input and (normalized_input in normalized_plot or normalized_plot in normalized_input):
+                return plot
+
+            if core_input and core_plot and (core_input == core_plot or core_input in core_plot or core_plot in core_input):
                 return plot
 
         return self.db.query(Plot).filter(Plot.plot_name.like(f"%{plot_name}%")).first()
@@ -106,10 +180,11 @@ class WateringService:
     ) -> WateringRecord:
         duration_minutes = None
         if start_time and end_time:
-            start_dt = datetime.combine(date.today(), start_time)
-            end_dt = datetime.combine(date.today(), end_time)
-            if end_dt < start_dt:
-                end_dt += timedelta(days=1)
+            start_dt = datetime.combine(operation_date, start_time)
+            end_dt = datetime.combine(
+                self._infer_end_date(operation_date, start_time, end_time, raw_input=raw_input),
+                end_time,
+            )
             duration_minutes = int((end_dt - start_dt).total_seconds() / 60)
 
         record = WateringRecord(
@@ -162,6 +237,7 @@ class WateringService:
         end_date: Optional[date] = None,
         user_id: Optional[int] = None,
         plot_id: Optional[int] = None,
+        plot_name: Optional[str] = None,
         owner_name: Optional[str] = None,
         confirm_status: Optional[int] = None,
         limit: int = 100,
@@ -176,6 +252,8 @@ class WateringService:
             query = query.filter(WateringRecord.user_id == user_id)
         if plot_id:
             query = query.filter(WateringRecord.plot_id == plot_id)
+        if plot_name:
+            query = query.join(Plot, WateringRecord.plot_id == Plot.id).filter(Plot.plot_name.like(f"%{plot_name}%"))
         if owner_name:
             query = query.join(Plot, WateringRecord.plot_id == Plot.id).filter(Plot.owner_name.like(f"%{owner_name}%"))
         if confirm_status is not None:

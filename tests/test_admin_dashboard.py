@@ -1,4 +1,9 @@
+import sys
+from pathlib import Path
+
 from fastapi.testclient import TestClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.main import app
 
@@ -9,6 +14,7 @@ def test_admin_dashboard_page():
         assert resp.status_code == 200
         assert "浇水记录管理后台" in resp.text
         assert "导出 CSV" in resp.text
+        assert "plot_name" in resp.text
 
 
 def test_admin_records_and_statistics_and_export():
@@ -16,6 +22,10 @@ def test_admin_records_and_statistics_and_export():
         records_resp = client.get("/api/v1/records")
         assert records_resp.status_code == 200
         assert isinstance(records_resp.json(), list)
+
+        filtered_records_resp = client.get("/api/v1/records", params={"plot_name": "3-1"})
+        assert filtered_records_resp.status_code == 200
+        assert isinstance(filtered_records_resp.json(), list)
 
         stats_resp = client.get("/api/v1/statistics")
         assert stats_resp.status_code == 200
@@ -27,3 +37,7 @@ def test_admin_records_and_statistics_and_export():
         assert export_resp.status_code == 200
         assert "text/csv" in export_resp.headers.get("content-type", "")
         assert "记录ID" in export_resp.text
+
+        filtered_export_resp = client.get("/api/v1/records/export", params={"plot_name": "3-1"})
+        assert filtered_export_resp.status_code == 200
+        assert "text/csv" in filtered_export_resp.headers.get("content-type", "")

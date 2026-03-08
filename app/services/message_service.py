@@ -1,4 +1,5 @@
-﻿from datetime import datetime
+import re
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -49,10 +50,10 @@ class MessageService:
     def _normalize_command(self, content: str) -> str:
         cmd = (content or "").strip().lower()
         cmd = cmd.replace("１", "1").replace("２", "2")
-        cmd = cmd.strip("。.!！?？,，；; ")
-        return cmd
+        return cmd.strip("。.!！?？,，；; ")
 
-    def _parse_time(self, t: Optional[str]):
+    @staticmethod
+    def _parse_time(t: Optional[str]):
         if not t:
             return None
         try:
@@ -60,11 +61,8 @@ class MessageService:
         except ValueError:
             return None
 
-    def _compose_raw_input(self, openid: str, user_name: str, user_input: str) -> str:
-        # WeChat callback does not include nickname directly. Use stored leader display name + openid.
-        return f"[组长昵称={user_name}][微信OpenID={openid}] {user_input}"
-
-    def _parse_date(self, d: Optional[str]):
+    @staticmethod
+    def _parse_date(d: Optional[str]) -> date:
         if not d:
             return datetime.now().date()
         try:
@@ -72,22 +70,86 @@ class MessageService:
         except ValueError:
             return datetime.now().date()
 
+    @staticmethod
+    def _compose_raw_input(openid: str, user_name: str, user_input: str) -> str:
+        return f"[组长昵称={user_name}][微信OpenID={openid}] {user_input}"
+
+    @staticmethod
+    def _extract_original_text(raw_input: Optional[str]) -> str:
+        text = str(raw_input or "")
+        return text.rsplit("] ", 1)[-1] if "] " in text else text
+
+    @staticmethod
+    def _relative_day_value(day_word: Optional[str]) -> Optional[int]:
+        mapping = {
+            "前天": -2,
+            "昨天": -1,
+            "今天": 0,
+            "明天": 1,
+            "次日": 1,
+            "翌日": 1,
+            "第二天": 1,
+        }
+        return mapping.get(day_word) if day_word else None
+
+    @classmethod
+    def _infer_end_date(
+        cls,
+        operation_date: date,
+        start_time: Optional[str],
+        end_time: Optional[str],
+        raw_input: Optional[str] = None,
+    ) -> date:
+        start_obj = cls._parse_time(start_time)
+        end_obj = cls._parse_time(end_time)
+        if start_obj and end_obj and end_obj < start_obj:
+            return operation_date + timedelta(days=1)
+
+        text = cls._extract_original_text(raw_input)
+        day_span = re.search(
+            r"(前天|昨天|今天|明天).{0,20}?(?:到|至|~|～|—|–|-).{0,20}?(昨天|今天|明天|次日|翌日|第二天)",
+            text,
+        )
+        if not day_span:
+            return operation_date
+
+        start_day = cls._relative_day_value(day_span.group(1))
+        end_day = cls._relative_day_value(day_span.group(2))
+        if start_day is None or end_day is None or end_day <= start_day:
+            return operation_date
+        return operation_date + timedelta(days=end_day - start_day)
+
+    @classmethod
+    def _build_time_text(
+        cls,
+        operation_date: date,
+        start_time: Optional[str],
+        end_time: Optional[str],
+        raw_input: Optional[str] = None,
+    ) -> str:
+        if start_time and end_time:
+            if not cls._parse_time(start_time) or not cls._parse_time(end_time):
+                return f"{start_time} - {end_time}"
+            end_date = cls._infer_end_date(operation_date, start_time, end_time, raw_input=raw_input)
+            return f"{operation_date:%m-%d} {start_time} - {end_date:%m-%d} {end_time}"
+        if start_time:
+            return f"{operation_date:%m-%d} {start_time}"
+        return "未指定"
+
     def _parse_and_confirm(self, openid: str, user_input: str) -> Tuple[str, bool]:
         try:
             parsed = self.llm_service.parse_watering_info(user_input)
-
             if parsed.get("is_chat"):
                 return settings.wechat.welcome_message, False
-
             if not parsed.get("success"):
                 message = parsed.get("message") or "信息不完整，请补充地块和方量。"
-                guide = "示例：今天下午2点到4点给3号地浇了50方水"
-                return f"{message}\n{guide}", False
+                return f"{message}\n示例：今天下午2点到4点给3号地浇了50方水", False
 
             nickname = self.wechat_user_service.get_user_nickname(openid, blocking=False)
             user = self.watering_service.get_or_create_user(openid, name=nickname)
             raw_input = self._compose_raw_input(openid, user.name, user_input)
             parsed["raw_input"] = raw_input
+
             parsed_plot_name = parsed.get("plot_name")
             display_plot_name = parsed_plot_name
             plot_id = None
@@ -100,18 +162,14 @@ class MessageService:
                     owner_name = plot.owner_name or "未登记"
 
             operation_date = self._parse_date(parsed.get("date"))
-            start_time_obj = self._parse_time(parsed.get("start_time"))
-            end_time_obj = self._parse_time(parsed.get("end_time"))
-
-            # Persist as pending first, then update status on confirm/cancel.
             record = self.watering_service.create_watering_record(
                 user_id=user.id,
                 plot_id=plot_id,
                 plot_name=display_plot_name or "未知地块",
                 volume=float(parsed.get("volume", 0) or 0),
                 operation_date=operation_date,
-                start_time=start_time_obj,
-                end_time=end_time_obj,
+                start_time=self._parse_time(parsed.get("start_time")),
+                end_time=self._parse_time(parsed.get("end_time")),
                 raw_input=raw_input,
                 confirm_status=0,
             )
@@ -122,32 +180,26 @@ class MessageService:
             pending_payload["owner_name"] = owner_name
             self.state_manager.save_pending_data(openid, pending_payload)
 
-            if parsed.get("start_time") and parsed.get("end_time"):
-                time_text = f"{parsed.get('start_time')} - {parsed.get('end_time')}"
-            elif parsed.get("start_time"):
-                time_text = f"{parsed.get('start_time')} 开始"
-            else:
-                time_text = "未指定"
-
+            time_text = self._build_time_text(
+                operation_date,
+                parsed.get("start_time"),
+                parsed.get("end_time"),
+                raw_input=raw_input,
+            )
             confirm_msg = (
                 "请确认浇水记录：\n"
                 f"地块：{display_plot_name or '未指定'}\n"
                 f"农户：{owner_name}\n"
                 f"水量：{parsed.get('volume', 0)} 方\n"
-                f"日期：{operation_date.strftime('%Y-%m-%d')}\n"
+                f"日期：{operation_date:%Y-%m-%d}\n"
                 f"时间：{time_text}\n\n"
                 "回复 1 或 确认：提交\n"
                 "回复 2 或 取消：放弃\n"
                 "直接重发内容：修改"
             )
             return confirm_msg, True
-
         except LLMException:
-            return (
-                "暂时无法自动解析这条消息，请按标准格式发送。\n"
-                "示例：今天下午2点到4点给3号地浇了50方水",
-                False,
-            )
+            return "暂时无法自动解析这条消息，请按标准格式发送。\n示例：今天下午2点到4点给3号地浇了50方水", False
         except Exception:
             return "消息处理失败，请稍后重试。", False
 
@@ -155,20 +207,16 @@ class MessageService:
         pending = self.state_manager.get_pending_data(openid)
         if not pending:
             return "没有待确认的记录，请先发送浇水信息。", False
-
         if command in self.CONFIRM_WORDS:
             return self._confirm_watering_record(openid, pending)
-
         if command in self.CANCEL_WORDS:
             self._cancel_pending_record(pending)
             self.state_manager.delete_pending_data(openid)
             return "已取消本次上报。", False
 
-        # Duplicate retry of the same report text: do not cancel/create a new record.
         if self._looks_like_same_pending_input(pending, original_content):
             return self._build_confirm_prompt_from_pending(pending), True
 
-        # User sends a genuinely new report while waiting for confirmation.
         self._cancel_pending_record(pending)
         self.state_manager.delete_pending_data(openid)
         return self._parse_and_confirm(openid, original_content)
@@ -181,27 +229,23 @@ class MessageService:
         return t
 
     def _looks_like_same_pending_input(self, pending_data: Dict[str, Any], original_content: str) -> bool:
-        raw_input = str(pending_data.get("raw_input") or "")
-        # raw_input format: [组长昵称=...][微信OpenID=...] 原始文本
-        msg = raw_input.rsplit("] ", 1)[-1] if "] " in raw_input else raw_input
+        msg = self._extract_original_text(pending_data.get("raw_input"))
         return self._normalize_free_text(msg) == self._normalize_free_text(original_content)
 
     def _build_confirm_prompt_from_pending(self, pending_data: Dict[str, Any]) -> str:
-        start_time = pending_data.get("start_time")
-        end_time = pending_data.get("end_time")
-        if start_time and end_time:
-            time_text = f"{start_time} - {end_time}"
-        elif start_time:
-            time_text = f"{start_time} 开始"
-        else:
-            time_text = "未指定"
         operation_date = self._parse_date(pending_data.get("date"))
+        time_text = self._build_time_text(
+            operation_date,
+            pending_data.get("start_time"),
+            pending_data.get("end_time"),
+            raw_input=pending_data.get("raw_input"),
+        )
         return (
             "请确认浇水记录：\n"
             f"地块：{pending_data.get('plot_name') or '未指定'}\n"
             f"农户：{pending_data.get('owner_name') or '未登记'}\n"
             f"水量：{pending_data.get('volume', 0)} 方\n"
-            f"日期：{operation_date.strftime('%Y-%m-%d')}\n"
+            f"日期：{operation_date:%Y-%m-%d}\n"
             f"时间：{time_text}\n\n"
             "回复 1 或 确认：提交\n"
             "回复 2 或 取消：放弃\n"
@@ -214,7 +258,6 @@ class MessageService:
             self.watering_service.update_confirm_status(int(record_id), 2)
 
     def _create_record_from_pending(self, openid: str, pending_data: Dict[str, Any], confirm_status: int) -> bool:
-        """Fallback path when pending has no valid record_id."""
         nickname = self.wechat_user_service.get_user_nickname(openid, blocking=False)
         user = self.watering_service.get_or_create_user(openid, name=nickname)
         plot_id = None
@@ -224,18 +267,14 @@ class MessageService:
             if plot:
                 plot_id = plot.id
 
-        operation_date = self._parse_date(pending_data.get("date"))
-        start_time_obj = self._parse_time(pending_data.get("start_time"))
-        end_time_obj = self._parse_time(pending_data.get("end_time"))
-
         self.watering_service.create_watering_record(
             user_id=user.id,
             plot_id=plot_id,
             plot_name=plot_name or "未知地块",
             volume=float(pending_data.get("volume", 0) or 0),
-            operation_date=operation_date,
-            start_time=start_time_obj,
-            end_time=end_time_obj,
+            operation_date=self._parse_date(pending_data.get("date")),
+            start_time=self._parse_time(pending_data.get("start_time")),
+            end_time=self._parse_time(pending_data.get("end_time")),
             raw_input=pending_data.get("raw_input", ""),
             confirm_status=confirm_status,
         )
@@ -244,26 +283,18 @@ class MessageService:
     def _confirm_watering_record(self, openid: str, pending_data: Dict[str, Any]) -> Tuple[str, bool]:
         try:
             record_id = pending_data.get("record_id")
-            record = None
-            if record_id:
-                record = self.watering_service.update_confirm_status(int(record_id), 1)
-
-            # Backward compatibility: pending payload created by older code may not carry record_id.
-            # Also handles rare cases where pending record is deleted unexpectedly.
+            record = self.watering_service.update_confirm_status(int(record_id), 1) if record_id else None
+            operation_date = record.operation_date if record else self._parse_date(pending_data.get("date"))
             if not record:
                 self._create_record_from_pending(openid, pending_data, confirm_status=1)
-                operation_date = self._parse_date(pending_data.get("date"))
-            else:
-                operation_date = record.operation_date
 
             self.state_manager.delete_pending_data(openid)
-
             return (
                 "上报成功。\n"
                 f"地块：{pending_data.get('plot_name') or '未知地块'}\n"
                 f"农户：{pending_data.get('owner_name') or '未登记'}\n"
                 f"水量：{pending_data.get('volume', 0)} 方\n"
-                f"日期：{operation_date.strftime('%Y-%m-%d')}",
+                f"日期：{operation_date:%Y-%m-%d}",
                 False,
             )
         except Exception as exc:
@@ -273,11 +304,7 @@ class MessageService:
         try:
             user = self.watering_service.get_or_create_user(openid)
             today = datetime.now().date()
-            stats = self.watering_service.get_statistics(
-                start_date=today,
-                end_date=today,
-                user_id=user.id,
-            )
+            stats = self.watering_service.get_statistics(start_date=today, end_date=today, user_id=user.id)
             if stats["total_count"] == 0:
                 return "今天暂无浇水记录。"
             return (

@@ -77,7 +77,7 @@ async def admin_dashboard() -> HTMLResponse:
     body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; margin: 0; background: #f5f7f6; }
     .wrap { max-width: 1280px; margin: 20px auto; padding: 0 16px; }
     .card { background: #fff; border: 1px solid #dfe5e2; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
-    .row { display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); gap: 10px; align-items: end; }
+    .row { display: grid; grid-template-columns: repeat(8, minmax(120px, 1fr)); gap: 10px; align-items: end; }
     label { display:block; font-size: 12px; color: #5c6861; margin-bottom: 4px; }
     input, select, button { width: 100%; height: 36px; border: 1px solid #d6ded9; border-radius: 8px; padding: 0 10px; }
     button { background: #2f7a56; color: #fff; cursor: pointer; }
@@ -111,6 +111,7 @@ async def admin_dashboard() -> HTMLResponse:
         <label>每页数量</label>
         <select id=\"limit\"><option>50</option><option selected>100</option><option>200</option></select>
       </div>
+      <div><label>地块名</label><input type=\"text\" id=\"plot_name\" placeholder=\"按地块名筛选\" /></div>
       <div><label>农户</label><input type=\"text\" id=\"owner_name\" placeholder=\"按所有者筛选\" /></div>
       <div><button onclick=\"loadData()\">查询</button></div>
       <div><button class=\"secondary\" onclick=\"exportCsv()\">导出 CSV</button></div>
@@ -132,13 +133,15 @@ async def admin_dashboard() -> HTMLResponse:
 </div>
 <script>
 function today(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
-function getFilters(){const p=new URLSearchParams();const sd=document.getElementById('start_date').value;const ed=document.getElementById('end_date').value;const cs=document.getElementById('confirm_status').value;const l=document.getElementById('limit').value;const owner=document.getElementById('owner_name').value;if(sd)p.set('start_date',sd);if(ed)p.set('end_date',ed);if(cs!=='')p.set('confirm_status',cs);if(l)p.set('limit',l);if(owner)p.set('owner_name',owner);p.set('offset','0');return p;}
+function getFilters(){const p=new URLSearchParams();const sd=document.getElementById('start_date').value;const ed=document.getElementById('end_date').value;const cs=document.getElementById('confirm_status').value;const l=document.getElementById('limit').value;const plot=document.getElementById('plot_name').value;const owner=document.getElementById('owner_name').value;if(sd)p.set('start_date',sd);if(ed)p.set('end_date',ed);if(cs!=='')p.set('confirm_status',cs);if(l)p.set('limit',l);if(plot)p.set('plot_name',plot);if(owner)p.set('owner_name',owner);p.set('offset','0');return p;}
 function statusText(s){if(s===1)return '<span class="ok">已确认</span>';if(s===0)return '<span class="pending">待确认</span>';if(s===2)return '<span class="cancel">已取消</span>';return s;}
 function esc(t){return String(t||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');}
-function isCrossDay(startTime,endTime){if(!startTime||!endTime)return false;return endTime < startTime;}
-function formatTimeRange(startTime,endTime){if(startTime&&endTime){if(isCrossDay(startTime,endTime))return `${startTime} - 次日${endTime}`;return `${startTime} - ${endTime}`;}if(startTime)return `${startTime} 开始`;return '-';}
-function formatDateCell(r){const opDate=r.operation_date||'-';if(r.start_time&&r.end_time&&isCrossDay(r.start_time,r.end_time)){return `${opDate} (${r.start_time} - 次日${r.end_time})`;}return opDate;}
-function renderRows(rows){const tb=document.getElementById('tbody');tb.innerHTML='';if(!rows.length){tb.innerHTML='<tr><td colspan="11">无记录</td></tr>';return;}rows.forEach(r=>{const tr=document.createElement('tr');const trange=formatTimeRange(r.start_time,r.end_time);const dateText=formatDateCell(r);tr.innerHTML=`<td>${r.id}</td><td>${r.leader_name||r.user_name||r.user_id}</td><td>${r.plot_name||'-'}</td><td>${r.plot_owner_name||'-'}</td><td>${Number(r.volume||0).toFixed(1)}</td><td>${dateText}</td><td>${trange}</td><td>${r.duration_minutes??'-'}</td><td title="${esc(r.raw_input)}">${esc(r.raw_input)||'-'}</td><td>${statusText(r.confirm_status)}</td><td>${r.create_time||'-'}</td>`;tb.appendChild(tr);});}
+function addOneDay(dateStr){if(!dateStr)return dateStr;const [y,m,d]=dateStr.split('-').map(Number);const dt=new Date(y,m-1,d);dt.setDate(dt.getDate()+1);return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;}
+function mmdd(isoDate){return isoDate&&isoDate.length>=10?isoDate.slice(5):'-';}
+function relativeDayValue(dayWord){const map={前天:-2,昨天:-1,今天:0,明天:1,次日:1,翌日:1,第二天:1};return dayWord in map?map[dayWord]:null;}
+function inferEndDate(opDate,startTime,endTime,rawInput){if(!opDate)return opDate;if(startTime&&endTime&&endTime<startTime)return addOneDay(opDate);const text=String(rawInput||'');const match=text.match(/(前天|昨天|今天|明天).{0,20}?(?:到|至|~|～|—|–|-).{0,20}?(昨天|今天|明天|次日|翌日|第二天)/);if(!match)return opDate;const startDay=relativeDayValue(match[1]);const endDay=relativeDayValue(match[2]);if(startDay===null||endDay===null||endDay<=startDay)return opDate;let next=opDate;for(let i=0;i<endDay-startDay;i++)next=addOneDay(next);return next;}
+function formatTimeRange(opDate,startTime,endTime,rawInput){if(startTime&&endTime){const endDate=inferEndDate(opDate,startTime,endTime,rawInput);return `${mmdd(opDate)} ${startTime} - ${mmdd(endDate)} ${endTime}`;}if(startTime)return `${mmdd(opDate)} ${startTime}`;return '-';}
+function renderRows(rows){const tb=document.getElementById('tbody');tb.innerHTML='';if(!rows.length){tb.innerHTML='<tr><td colspan="11">无记录</td></tr>';return;}rows.forEach(r=>{const tr=document.createElement('tr');const trange=formatTimeRange(r.operation_date,r.start_time,r.end_time,r.raw_input);tr.innerHTML=`<td>${r.id}</td><td>${r.leader_name||r.user_name||r.user_id}</td><td>${r.plot_name||'-'}</td><td>${r.plot_owner_name||'-'}</td><td>${Number(r.volume||0).toFixed(1)}</td><td>${r.operation_date||'-'}</td><td>${trange}</td><td>${r.duration_minutes??'-'}</td><td title="${esc(r.raw_input)}">${esc(r.raw_input)||'-'}</td><td>${statusText(r.confirm_status)}</td><td>${r.create_time||'-'}</td>`;tb.appendChild(tr);});}
 async function loadData(){const p=getFilters();document.getElementById('meta').innerText='加载中...';const res=await fetch('/api/v1/records?'+p.toString());if(!res.ok){document.getElementById('meta').innerText='加载失败';return;}const rows=await res.json();renderRows(rows);document.getElementById('meta').innerText=`已加载 ${rows.length} 条`;}
 function exportCsv(){const p=getFilters();window.open('/api/v1/records/export?'+p.toString(),'_blank');}
 (function(){const t=today();document.getElementById('start_date').value=t;document.getElementById('end_date').value=t;loadData();})();
@@ -226,6 +229,7 @@ async def get_records(
     end_date: Optional[str] = Query(None, description="end date YYYY-MM-DD"),
     user_id: Optional[int] = Query(None, description="leader id"),
     plot_id: Optional[int] = Query(None, description="plot id"),
+    plot_name: Optional[str] = Query(None, description="plot name"),
     owner_name: Optional[str] = Query(None, description="plot owner name"),
     confirm_status: Optional[int] = Query(None, description="confirm status"),
     limit: int = Query(100, ge=1, le=1000, description="limit"),
@@ -238,6 +242,7 @@ async def get_records(
         end_date=_parse_date(end_date),
         user_id=user_id,
         plot_id=plot_id,
+        plot_name=plot_name,
         owner_name=owner_name,
         confirm_status=confirm_status,
         limit=limit,
@@ -252,6 +257,7 @@ async def export_records_csv(
     end_date: Optional[str] = Query(None, description="end date YYYY-MM-DD"),
     user_id: Optional[int] = Query(None, description="leader id"),
     plot_id: Optional[int] = Query(None, description="plot id"),
+    plot_name: Optional[str] = Query(None, description="plot name"),
     owner_name: Optional[str] = Query(None, description="plot owner name"),
     confirm_status: Optional[int] = Query(None, description="confirm status"),
     db: Session = Depends(get_db),
@@ -262,6 +268,7 @@ async def export_records_csv(
         end_date=_parse_date(end_date),
         user_id=user_id,
         plot_id=plot_id,
+        plot_name=plot_name,
         owner_name=owner_name,
         confirm_status=confirm_status,
         limit=5000,
