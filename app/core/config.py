@@ -1,4 +1,5 @@
-﻿import os
+import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -71,7 +72,7 @@ class LLMDeepSeekConfig(BaseModel):
 
 class LLMPromptConfig(BaseModel):
     system_template: str = ""
-    examples: List[Dict[str, str]] = []
+    examples: List[Dict[str, str]] = Field(default_factory=list)
 
 
 class LLMConfig(BaseModel):
@@ -99,10 +100,10 @@ class LoggingConfig(BaseModel):
 
 class CORSConfig(BaseModel):
     enabled: bool = True
-    allow_origins: List[str] = ["*"]
+    allow_origins: List[str] = Field(default_factory=lambda: ["*"])
     allow_credentials: bool = True
-    allow_methods: List[str] = ["*"]
-    allow_headers: List[str] = ["*"]
+    allow_methods: List[str] = Field(default_factory=lambda: ["*"])
+    allow_headers: List[str] = Field(default_factory=lambda: ["*"])
 
 
 class Settings(BaseModel):
@@ -116,7 +117,47 @@ class Settings(BaseModel):
     cors: CORSConfig = Field(default_factory=CORSConfig)
 
 
+_ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(?::-([^}]*))?\}")
+
+
+def load_dotenv(dotenv_path: Optional[str] = None) -> None:
+    if dotenv_path is None:
+        dotenv_path = str(Path(__file__).parent.parent.parent / ".env")
+
+    if not os.path.exists(dotenv_path):
+        return
+
+    with open(dotenv_path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def _resolve_env_value(value: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        key = match.group(1)
+        default = match.group(2) or ""
+        return os.environ.get(key, default)
+
+    return _ENV_PATTERN.sub(repl, value)
+
+
+def _resolve_env_placeholders(data: Any) -> Any:
+    if isinstance(data, dict):
+        return {k: _resolve_env_placeholders(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_resolve_env_placeholders(v) for v in data]
+    if isinstance(data, str):
+        return _resolve_env_value(data)
+    return data
+
+
 def load_config_from_yaml(config_path: Optional[str] = None) -> Dict[str, Any]:
+    load_dotenv()
+
     if config_path is None:
         config_path = os.environ.get(
             "CONFIG_PATH",
@@ -129,13 +170,12 @@ def load_config_from_yaml(config_path: Optional[str] = None) -> Dict[str, Any]:
     with open(config_path, "r", encoding="utf-8") as f:
         config_dict = yaml.safe_load(f)
 
-    return config_dict or {}
+    return _resolve_env_placeholders(config_dict or {})
 
 
 @lru_cache()
 def get_settings() -> Settings:
-    config_dict = load_config_from_yaml()
-    return Settings(**config_dict)
+    return Settings(**load_config_from_yaml())
 
 
 settings = get_settings()

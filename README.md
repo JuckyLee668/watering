@@ -8,7 +8,7 @@
 - 上报解析：本地规则优先，必要时调用大模型（OpenAI / 智谱 / 通义 / DeepSeek）
 - 确认流程：回复 `1/确认` 提交，回复 `2/取消` 放弃
 - 数据持久化：SQLite（不依赖 Redis）
-- 管理后台：浇水记录查询、按农户筛选、CSV 导出
+- 管理后台：浇水记录查询、按地块名/农户筛选、CSV 导出
 - 日志后台：`/api/v1/admin/log` 独立展示微信会话日志
 ## 待办功能
 - 暂未能获取到真实用户昵称和相关信息，需添加自定义菜单和相关的登录页面
@@ -44,12 +44,14 @@
 - Windows PowerShell 或 Linux/macOS Shell
 - 公众号服务器配置权限（生产环境需 HTTPS）
 
-## 配置文件
+## 配置方式
 
-- 生产/本地私有配置：`config.yaml`
-- 脱敏模板：`config.yaml.example`
+- 主要编辑：`.env`
+- 配置映射：`config.yaml`
+- 脱敏示例：`.env.example`
 
-建议流程：复制 `config.yaml.example` 为 `config.yaml` 后填写真实密钥。
+当前配置加载方式是：先读取项目根目录 `.env`，再解析 `config.yaml` 中的 `${ENV_NAME:-默认值}` 占位。
+建议流程：复制 `.env.example` 为 `.env` 后填写真实密钥；日常只改 `.env`。
 
 ## 快速启动
 
@@ -61,6 +63,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 启动后可访问：
 
+- 根路径：`http://127.0.0.1:8000/`
 - 健康检查：`http://127.0.0.1:8000/api/v1/health`
 - 回调验活：`http://127.0.0.1:8000/wechat/callback`
 - 记录后台：`http://127.0.0.1:8000/api/v1/admin/dashboard`
@@ -109,7 +112,7 @@ RELOAD=1 sh scripts/start_local.sh
 在公众号后台「开发与接口管理 -> 基本配置 -> 服务器配置」填写：
 
 - URL：`https://你的域名/wechat/callback`
-- Token：必须与 `config.yaml -> wechat.token` 完全一致
+- Token：必须与 `.env` 中的 `WECHAT_TOKEN` 完全一致
 - EncodingAESKey：与配置一致（联调阶段可先明文模式）
 
 注意：
@@ -165,8 +168,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1 -SkipInstall 
 
 ## 安全建议
 
-- 不要把真实 `app_secret`、`api_key` 提交到仓库
-- 通过私有配置或环境变量注入敏感信息
+- 不要把真实 `.env` 提交到仓库
+- 不要把真实 `app_secret`、`api_key` 写回 `config.yaml`
+- 通过 `.env` 注入敏感信息
 - 生产环境启用 HTTPS、访问控制和备份策略
 
 ## 相关文档
