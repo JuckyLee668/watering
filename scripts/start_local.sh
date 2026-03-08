@@ -13,18 +13,25 @@ fi
 echo "[1/3] Installing dependencies..."
 "$PYTHON_BIN" -m pip install -r requirements.txt
 
+if [ "${SKIP_SELF_CHECK:-0}" = "1" ]; then
+  echo "[2/4] Skipping self-check..."
+else
+  echo "[2/4] Running self-check..."
+  "$PYTHON_BIN" scripts/self_check.py
+fi
+
 if [ "${RESET_DB:-0}" = "1" ]; then
-  echo "[2/3] Rebuilding SQLite database (drop + sample)..."
+  echo "[3/4] Rebuilding SQLite database (drop + sample)..."
   "$PYTHON_BIN" scripts/init_db.py --drop --sample
 else
-  echo "[2/3] Ensuring database tables exist (keep existing data)..."
+  echo "[3/4] Ensuring database tables exist (keep existing data)..."
   "$PYTHON_BIN" scripts/init_db.py
 fi
 
 if [ "${RELOAD:-0}" = "1" ]; then
-  echo "[3/3] Starting app on http://0.0.0.0:8000 (reload mode)..."
+  echo "[4/4] Starting app on http://0.0.0.0:8000 (reload mode)..."
   exec "$PYTHON_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 else
-  echo "[3/3] Starting app on http://0.0.0.0:8000 (stable mode)..."
+  echo "[4/4] Starting app on http://0.0.0.0:8000 (stable mode)..."
   exec "$PYTHON_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 fi

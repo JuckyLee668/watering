@@ -80,6 +80,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_local.ps1
 常用参数：
 
 - `-SkipInstall`：跳过依赖安装
+- `-SkipSelfCheck`：跳过启动前自检
 - `-KillPort`：启动前清理占用 `8000` 的进程
 - `-Reload`：开发热更新模式
 - `-ResetDb`：重建数据库（会清空历史数据）
@@ -99,6 +100,7 @@ sh scripts/start_local.sh
 环境变量：
 
 - `RELOAD=1`：启用热更新
+- `SKIP_SELF_CHECK=1`：跳过启动前自检
 - `RESET_DB=1`：重建数据库（会清空历史数据）
 
 示例：
@@ -155,6 +157,27 @@ python scripts/check_public_wechat.py --url https://你的域名/wechat/callback
 2. 域名 DNS、TLS、隧道/反代是否正常
 3. 服务是否稳定运行（避免频繁重启）
 4. 查看 `logs/app.log` 和 `/api/v1/admin/log`
+
+### 5) 启动前自检
+
+可单独执行：
+
+```bash
+python scripts/self_check.py
+```
+
+默认检查项：
+
+- `.env` / `config.yaml` / 地块 CSV 是否存在
+- 微信关键配置是否已加载
+- 数据库连接是否正常
+- 当前 LLM 提供商是否可访问
+
+如果只想跳过大模型检查：
+
+```bash
+python scripts/self_check.py --skip-llm
+```
 
 ### 3) 启动报端口占用（WinError 10048）
 

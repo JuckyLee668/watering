@@ -1,6 +1,7 @@
 param(
     [string]$Python = "python",
     [switch]$SkipInstall,
+    [switch]$SkipSelfCheck,
     [switch]$Reload,
     [switch]$KillPort,
     [switch]$ResetDb
@@ -27,22 +28,29 @@ if ($listeners.Count -gt 0) {
 }
 
 if (-not $SkipInstall) {
-    Write-Host "[1/3] Installing dependencies..."
+    Write-Host "[1/4] Installing dependencies..."
     & $Python -m pip install -r requirements.txt
 }
 
+if (-not $SkipSelfCheck) {
+    Write-Host "[2/4] Running self-check..."
+    & $Python scripts/self_check.py
+} else {
+    Write-Host "[2/4] Skipping self-check..."
+}
+
 if ($ResetDb) {
-    Write-Host "[2/3] Rebuilding SQLite database (drop + sample)..."
+    Write-Host "[3/4] Rebuilding SQLite database (drop + sample)..."
     & $Python scripts/init_db.py --drop --sample
 } else {
-    Write-Host "[2/3] Ensuring database tables exist (keep existing data)..."
+    Write-Host "[3/4] Ensuring database tables exist (keep existing data)..."
     & $Python scripts/init_db.py
 }
 
 if ($Reload) {
-    Write-Host "[3/3] Starting app on http://0.0.0.0:8000 (reload mode)..."
+    Write-Host "[4/4] Starting app on http://0.0.0.0:8000 (reload mode)..."
     & $Python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 } else {
-    Write-Host "[3/3] Starting app on http://0.0.0.0:8000 (stable mode)..."
+    Write-Host "[4/4] Starting app on http://0.0.0.0:8000 (stable mode)..."
     & $Python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 }
