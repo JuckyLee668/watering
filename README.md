@@ -4,14 +4,15 @@
 
 ## 功能介绍
 
-- 微信回调：`GET/POST /wechat/callback`
-- 地块信息：从 `data/plots_sample.csv` 加载，包含地块名、农户等信息
-- 数据持久化：SQLite，本地数据库默认是 `data/watering.db`
-- 记录内容：组长、地块、农户、水量、日期、时间段、时长、原始上报文本、状态、创建时间
-- 管理后台：`/api/v1/admin/dashboard`，支持按日期、地块名、农户、状态筛选，并导出 CSV
-- 日志后台：`/api/v1/admin/log`，独立展示微信会话日志
-- 启动前自检：检查 `.env`、`config.yaml`、地块 CSV、数据库连接、LLM 连通性
-
+- [x]微信回调：`GET/POST /wechat/callback`
+- [x]地块信息：从 `data/plots_sample.csv` 加载，包含地块名、农户等信息
+- [x]数据持久化：SQLite，本地数据库默认是 `data/watering.db`
+- [x]记录内容：组长、地块、农户、水量、日期、时间段、时长、原始上报文本、状态、创建时间
+- [x]管理后台：`/api/v1/admin/dashboard`，支持按日期、地块名、农户、状态筛选，并导出 CSV
+- [x]日志后台：`/api/v1/admin/log`，独立展示微信会话日志
+- [X]启动前自检：检查 `.env`、`config.yaml`、地块 CSV、数据库连接、LLM 连通性
+- [ ]获取真实用户信息
+- [ ]阻止重复提交
 ## 页面截图
 
 ### 管理后台（浇水记录）
