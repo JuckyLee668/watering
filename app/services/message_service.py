@@ -13,7 +13,7 @@ from app.services.watering_service import get_watering_service
 
 
 class MessageService:
-    """Message processing service for wechat callbacks."""
+    """Message processing service for WeChat callbacks."""
 
     CONFIRM_WORDS = {"1", "确认", "yes", "y", "确定"}
     CANCEL_WORDS = {"2", "取消", "no", "n"}
@@ -50,7 +50,7 @@ class MessageService:
     def _normalize_command(self, content: str) -> str:
         cmd = (content or "").strip().lower()
         cmd = cmd.replace("１", "1").replace("２", "2")
-        return cmd.strip("。.!！?？,，；; ")
+        return cmd.strip("。.!！?？,，;；:： ")
 
     @staticmethod
     def _parse_time(t: Optional[str]):
@@ -186,22 +186,31 @@ class MessageService:
                 parsed.get("end_time"),
                 raw_input=raw_input,
             )
-            confirm_msg = (
-                "请确认浇水记录：\n"
-                f"地块：{display_plot_name or '未指定'}\n"
-                f"农户：{owner_name}\n"
-                f"水量：{parsed.get('volume', 0)} 方\n"
-                f"日期：{operation_date:%Y-%m-%d}\n"
-                f"时间：{time_text}\n\n"
-                "回复 1 或 确认：提交\n"
-                "回复 2 或 取消：放弃\n"
-                "直接重发内容：修改"
-            )
-            return confirm_msg, True
+            return self._build_confirm_message(display_plot_name, owner_name, parsed.get("volume", 0), operation_date, time_text), True
         except LLMException:
             return "暂时无法自动解析这条消息，请按标准格式发送。\n示例：今天下午2点到4点给3号地浇了50方水", False
         except Exception:
             return "消息处理失败，请稍后重试。", False
+
+    @staticmethod
+    def _build_confirm_message(
+        plot_name: Optional[str],
+        owner_name: str,
+        volume: Any,
+        operation_date: date,
+        time_text: str,
+    ) -> str:
+        return (
+            "请确认浇水记录：\n"
+            f"地块：{plot_name or '未指定'}\n"
+            f"农户：{owner_name}\n"
+            f"水量：{volume} 方\n"
+            f"日期：{operation_date:%Y-%m-%d}\n"
+            f"时间：{time_text}\n\n"
+            "回复 1 或 确认：提交\n"
+            "回复 2 或 取消：放弃\n"
+            "直接重发内容：修改"
+        )
 
     def _handle_confirmation(self, openid: str, command: str, original_content: str) -> Tuple[str, bool]:
         pending = self.state_manager.get_pending_data(openid)
@@ -240,22 +249,18 @@ class MessageService:
             pending_data.get("end_time"),
             raw_input=pending_data.get("raw_input"),
         )
-        return (
-            "请确认浇水记录：\n"
-            f"地块：{pending_data.get('plot_name') or '未指定'}\n"
-            f"农户：{pending_data.get('owner_name') or '未登记'}\n"
-            f"水量：{pending_data.get('volume', 0)} 方\n"
-            f"日期：{operation_date:%Y-%m-%d}\n"
-            f"时间：{time_text}\n\n"
-            "回复 1 或 确认：提交\n"
-            "回复 2 或 取消：放弃\n"
-            "直接重发内容：修改"
+        return self._build_confirm_message(
+            pending_data.get("plot_name"),
+            pending_data.get("owner_name") or "未登记",
+            pending_data.get("volume", 0),
+            operation_date,
+            time_text,
         )
 
     def _cancel_pending_record(self, pending_data: Dict[str, Any]) -> None:
         record_id = pending_data.get("record_id")
         if record_id:
-            self.watering_service.update_confirm_status(int(record_id), 2)
+            self.watering_service.update_confirm_status(int(record_id), 2, expected_status=0)
 
     def _create_record_from_pending(self, openid: str, pending_data: Dict[str, Any], confirm_status: int) -> bool:
         nickname = self.wechat_user_service.get_user_nickname(openid, blocking=False)
@@ -283,7 +288,11 @@ class MessageService:
     def _confirm_watering_record(self, openid: str, pending_data: Dict[str, Any]) -> Tuple[str, bool]:
         try:
             record_id = pending_data.get("record_id")
-            record = self.watering_service.update_confirm_status(int(record_id), 1) if record_id else None
+            record = (
+                self.watering_service.update_confirm_status(int(record_id), 1, expected_status=0)
+                if record_id
+                else None
+            )
             operation_date = record.operation_date if record else self._parse_date(pending_data.get("date"))
             if not record:
                 self._create_record_from_pending(openid, pending_data, confirm_status=1)

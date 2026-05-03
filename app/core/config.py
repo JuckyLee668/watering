@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AppConfig(BaseModel):
@@ -44,7 +44,7 @@ class WeChatConfig(BaseModel):
     token: str = ""
     encoding_aes_key: str = ""
     callback_url: str = "/wechat/callback"
-    welcome_message: str = "您好！欢迎使用智能浇水上报系统。"
+    welcome_message: str = "您好！欢迎使用智能浇水上报系统。请直接输入浇水信息，例如：今天下午2点到4点给3号地浇了50方水。"
 
 
 class LLMOpenAIConfig(BaseModel):
@@ -57,6 +57,7 @@ class LLMOpenAIConfig(BaseModel):
 
 class LLMZhipuaiConfig(BaseModel):
     api_key: str = ""
+    model: str = "glm-4"
 
 
 class LLMQwenConfig(BaseModel):
@@ -70,6 +71,12 @@ class LLMDeepSeekConfig(BaseModel):
     model: str = "deepseek-chat"
 
 
+class LLMRuntimeConfig(BaseModel):
+    temperature: float = 0.1
+    max_tokens: int = 500
+    timeout_seconds: float = 3.5
+
+
 class LLMPromptConfig(BaseModel):
     system_template: str = ""
     examples: List[Dict[str, str]] = Field(default_factory=list)
@@ -81,6 +88,7 @@ class LLMConfig(BaseModel):
     zhipuai: LLMZhipuaiConfig = Field(default_factory=LLMZhipuaiConfig)
     qwen: LLMQwenConfig = Field(default_factory=LLMQwenConfig)
     deepseek: LLMDeepSeekConfig = Field(default_factory=LLMDeepSeekConfig)
+    runtime: LLMRuntimeConfig = Field(default_factory=LLMRuntimeConfig)
     prompt: LLMPromptConfig = Field(default_factory=LLMPromptConfig)
 
 
@@ -105,6 +113,17 @@ class CORSConfig(BaseModel):
     allow_methods: List[str] = Field(default_factory=lambda: ["*"])
     allow_headers: List[str] = Field(default_factory=lambda: ["*"])
 
+    @field_validator("allow_origins", "allow_methods", "allow_headers", mode="before")
+    @classmethod
+    def split_csv_values(cls, value):
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+
+class AdminConfig(BaseModel):
+    token: str = ""
+
 
 class Settings(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
@@ -115,6 +134,7 @@ class Settings(BaseModel):
     plots: PlotsConfig = Field(default_factory=PlotsConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     cors: CORSConfig = Field(default_factory=CORSConfig)
+    admin: AdminConfig = Field(default_factory=AdminConfig)
 
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(?::-([^}]*))?\}")
@@ -181,6 +201,13 @@ def _apply_generic_llm_env(settings: Settings) -> Settings:
     generic_temperature = os.environ.get("LLM_TEMPERATURE", "").strip()
     generic_max_tokens = os.environ.get("LLM_MAX_TOKENS", "").strip()
 
+    if generic_temperature:
+        settings.llm.runtime.temperature = float(generic_temperature)
+        settings.llm.openai.temperature = float(generic_temperature)
+    if generic_max_tokens:
+        settings.llm.runtime.max_tokens = int(generic_max_tokens)
+        settings.llm.openai.max_tokens = int(generic_max_tokens)
+
     if provider == "openai":
         if generic_api_key:
             settings.llm.openai.api_key = generic_api_key
@@ -188,13 +215,11 @@ def _apply_generic_llm_env(settings: Settings) -> Settings:
             settings.llm.openai.base_url = generic_base_url
         if generic_model:
             settings.llm.openai.model = generic_model
-        if generic_temperature:
-            settings.llm.openai.temperature = float(generic_temperature)
-        if generic_max_tokens:
-            settings.llm.openai.max_tokens = int(generic_max_tokens)
     elif provider == "zhipuai":
         if generic_api_key:
             settings.llm.zhipuai.api_key = generic_api_key
+        if generic_model:
+            settings.llm.zhipuai.model = generic_model
     elif provider == "qwen":
         if generic_api_key:
             settings.llm.qwen.api_key = generic_api_key
@@ -207,10 +232,6 @@ def _apply_generic_llm_env(settings: Settings) -> Settings:
             settings.llm.deepseek.base_url = generic_base_url
         if generic_model:
             settings.llm.deepseek.model = generic_model
-        if generic_temperature:
-            settings.llm.openai.temperature = float(generic_temperature)
-        if generic_max_tokens:
-            settings.llm.openai.max_tokens = int(generic_max_tokens)
 
     return settings
 

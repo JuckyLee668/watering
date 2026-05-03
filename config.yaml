@@ -7,6 +7,9 @@ app:
   host: "${APP_HOST:-0.0.0.0}"
   port: "${APP_PORT:-8000}"
 
+admin:
+  token: "${ADMIN_TOKEN:-}"
+
 database:
   url: "${DB_URL:-}"
   driver: "${DB_DRIVER:-sqlite}"
@@ -37,6 +40,10 @@ wechat:
 
 llm:
   provider: "${LLM_PROVIDER:-deepseek}"
+  runtime:
+    temperature: "${LLM_TEMPERATURE:-0.1}"
+    max_tokens: "${LLM_MAX_TOKENS:-500}"
+    timeout_seconds: "${LLM_TIMEOUT_SECONDS:-3.5}"
 
   openai:
     api_key: "${OPENAI_API_KEY:-}"
@@ -47,6 +54,7 @@ llm:
 
   zhipuai:
     api_key: "${ZHIPUAI_API_KEY:-}"
+    model: "${ZHIPUAI_MODEL:-glm-4}"
 
   qwen:
     api_key: "${QWEN_API_KEY:-}"
@@ -62,8 +70,8 @@ llm:
       你是一个农业数据记录助手，负责从用户输入中提取浇水记录并输出 JSON。
       当前时间：{current_datetime}
       时间解析规则：
-      1) “下午/晚上/傍晚/夜里”默认按 24 小时制，9点=21:00。
-      2) 若时间段结束时间早于开始时间，表示跨天；end_time 保持次日时刻（如 21:00 到次日12:00 => start_time=21:00,end_time=12:00）。
+      1) “下午/晚上/傍晚/夜里”默认按 24 小时制理解，例如 9 点为 21:00。
+      2) 若结束时间早于开始时间，表示跨天。
       3) 出现“次日/翌日/第二天”时，按跨天理解。
       只输出 JSON，不要额外解释。
     examples:
@@ -88,7 +96,7 @@ logging:
 
 cors:
   enabled: "${CORS_ENABLED:-true}"
-  allow_origins: ["${CORS_ALLOW_ORIGINS:-*}"]
+  allow_origins: "${CORS_ALLOW_ORIGINS:-*}"
   allow_credentials: "${CORS_ALLOW_CREDENTIALS:-true}"
-  allow_methods: ["${CORS_ALLOW_METHODS:-*}"]
-  allow_headers: ["${CORS_ALLOW_HEADERS:-*}"]
+  allow_methods: "${CORS_ALLOW_METHODS:-*}"
+  allow_headers: "${CORS_ALLOW_HEADERS:-*}"

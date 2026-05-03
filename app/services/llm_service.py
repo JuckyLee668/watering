@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 from app.core.config import settings
 from app.core.exceptions import LLMException
+from app.schemas.llm import parse_watering_result_json
 
 
 class LLMService:
@@ -108,21 +109,21 @@ class LLMService:
                         {"role": "system", "content": prompt["system"]},
                         {"role": "user", "content": prompt["user"]},
                     ],
-                    temperature=settings.llm.openai.temperature,
-                    max_tokens=settings.llm.openai.max_tokens,
-                    timeout=3.5,
+                    temperature=settings.llm.runtime.temperature,
+                    max_tokens=settings.llm.runtime.max_tokens,
+                    timeout=settings.llm.runtime.timeout_seconds,
                 )
                 result_text = response.choices[0].message.content
 
             elif self._provider == "zhipuai":
                 response = self._client.chat.completions.create(
-                    model="glm-4",
+                    model=settings.llm.zhipuai.model,
                     messages=[
                         {"role": "system", "content": prompt["system"]},
                         {"role": "user", "content": prompt["user"]},
                     ],
-                    temperature=settings.llm.openai.temperature,
-                    timeout=3.5,
+                    temperature=settings.llm.runtime.temperature,
+                    timeout=settings.llm.runtime.timeout_seconds,
                 )
                 result_text = response.choices[0].message.content
 
@@ -175,7 +176,14 @@ class LLMService:
                 result_text = result_text[:-3]
             result_text = result_text.strip()
 
-            data = json.loads(result_text)
+            data_model, validation_error = parse_watering_result_json(result_text)
+            if data_model is None:
+                return {
+                    "success": False,
+                    "raw_input": original_input,
+                    "message": f"解析失败: {validation_error}",
+                }
+            data = data_model.model_dump()
 
             if data.get("intent") == "chat":
                 return {
@@ -209,12 +217,8 @@ class LLMService:
                 "raw_input": original_input,
             }
 
-        except json.JSONDecodeError as exc:
-            return {
-                "success": False,
-                "raw_input": original_input,
-                "message": f"解析失败: {str(exc)}",
-            }
+        except Exception as exc:
+            return {"success": False, "raw_input": original_input, "message": f"解析失败: {str(exc)}"}
 
     def _normalize_llm_times_by_text(
         self,

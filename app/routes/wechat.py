@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 from loguru import logger
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.exceptions import WeChatException
@@ -136,7 +137,11 @@ async def _handle_event(event: str, openid: str, from_user: str, db: Session):
 async def _handle_text(content: str, openid: str, from_user: str, db: Session):
     try:
         message_service = get_message_service(db)
-        reply_content, _waiting_confirm = message_service.process_text_message(openid=openid, content=content)
+        reply_content, _waiting_confirm = await run_in_threadpool(
+            message_service.process_text_message,
+            openid,
+            content,
+        )
         _safe_log(db, openid, "text", "out", reply_content)
         xml_body = WeChatUtils.build_text_message(to_user=openid, from_user=from_user, content=reply_content)
         return Response(content=xml_body, media_type="application/xml")

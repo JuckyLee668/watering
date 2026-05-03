@@ -1,20 +1,24 @@
 ﻿import re
+import threading
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import desc, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.database import Plot, User, WateringRecord
 from app.services.plot_catalog_service import get_plot_catalog_service
+
+
+_plots_sync_lock = threading.Lock()
+_plots_synced = False
 
 
 class WateringService:
     def __init__(self, db: Session):
         self.db = db
         self.plot_catalog = get_plot_catalog_service(db)
-        self._plots_synced = False
 
     @staticmethod
     def _cn_to_int(text: str) -> Optional[int]:
@@ -130,23 +134,26 @@ class WateringService:
         return user
 
     def _ensure_plots_from_csv(self):
-        if self._plots_synced:
+        global _plots_synced
+        if _plots_synced:
             return
-        self.plot_catalog.sync_to_database()
-        self._plots_synced = True
+        with _plots_sync_lock:
+            if _plots_synced:
+                return
+            self.plot_catalog.sync_to_database()
+            _plots_synced = True
 
     def get_or_create_plot(self, plot_name: str) -> Optional[Plot]:
         self._ensure_plots_from_csv()
         aliases = self._plot_aliases(plot_name)
-        plots = self.db.query(Plot).all()
-        plot_by_name = {(p.plot_name or ""): p for p in plots}
 
         for alias in aliases:
-            plot = plot_by_name.get(alias)
+            plot = self.db.query(Plot).filter(Plot.plot_name == alias, Plot.status == 1).first()
             if plot:
                 return plot
 
         normalized_aliases = {a.replace(" ", "") for a in aliases}
+        plots = self.db.query(Plot).filter(Plot.status == 1).all()
         for plot in plots:
             if (plot.plot_name or "").replace(" ", "") in normalized_aliases:
                 return plot
@@ -243,7 +250,10 @@ class WateringService:
         limit: int = 100,
         offset: int = 0,
     ) -> List[WateringRecord]:
-        query = self.db.query(WateringRecord)
+        query = self.db.query(WateringRecord).options(
+            selectinload(WateringRecord.user),
+            selectinload(WateringRecord.plot),
+        )
         if start_date:
             query = query.filter(WateringRecord.operation_date >= start_date)
         if end_date:
@@ -252,10 +262,12 @@ class WateringService:
             query = query.filter(WateringRecord.user_id == user_id)
         if plot_id:
             query = query.filter(WateringRecord.plot_id == plot_id)
+        if plot_name or owner_name:
+            query = query.join(Plot, WateringRecord.plot_id == Plot.id)
         if plot_name:
-            query = query.join(Plot, WateringRecord.plot_id == Plot.id).filter(Plot.plot_name.like(f"%{plot_name}%"))
+            query = query.filter(Plot.plot_name.like(f"%{plot_name}%"))
         if owner_name:
-            query = query.join(Plot, WateringRecord.plot_id == Plot.id).filter(Plot.owner_name.like(f"%{owner_name}%"))
+            query = query.filter(Plot.owner_name.like(f"%{owner_name}%"))
         if confirm_status is not None:
             query = query.filter(WateringRecord.confirm_status == confirm_status)
         return query.order_by(desc(WateringRecord.operation_date), desc(WateringRecord.create_time)).offset(offset).limit(limit).all()
@@ -263,8 +275,16 @@ class WateringService:
     def get_record_by_id(self, record_id: int) -> Optional[WateringRecord]:
         return self.db.query(WateringRecord).filter(WateringRecord.id == record_id).first()
 
-    def update_confirm_status(self, record_id: int, confirm_status: int) -> Optional[WateringRecord]:
-        record = self.get_record_by_id(record_id)
+    def update_confirm_status(
+        self,
+        record_id: int,
+        confirm_status: int,
+        expected_status: Optional[int] = None,
+    ) -> Optional[WateringRecord]:
+        query = self.db.query(WateringRecord).filter(WateringRecord.id == record_id)
+        if expected_status is not None:
+            query = query.filter(WateringRecord.confirm_status == expected_status)
+        record = query.first()
         if not record:
             return None
         record.confirm_status = confirm_status

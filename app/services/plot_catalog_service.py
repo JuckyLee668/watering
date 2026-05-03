@@ -57,9 +57,16 @@ class PlotCatalogService:
         """将CSV中的地块同步到数据库（按plot_code upsert）"""
         rows = self.load_from_csv()
         synced = 0
+        existing_by_code = {}
+        if rows:
+            plot_codes = [row["plot_code"] for row in rows]
+            existing_by_code = {
+                plot.plot_code: plot
+                for plot in self.db.query(Plot).filter(Plot.plot_code.in_(plot_codes)).all()
+            }
 
         for row in rows:
-            existing = self.db.query(Plot).filter(Plot.plot_code == row["plot_code"]).first()
+            existing = existing_by_code.get(row["plot_code"])
 
             area = float(row["area"]) if row["area"] else None
             status = int(row["status"]) if row["status"] else 1
